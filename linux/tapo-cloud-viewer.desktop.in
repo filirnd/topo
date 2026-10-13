@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Topo - desktop app for Tapo camera
+Comment=Topo - desktop app for Tapo camera
+Exec=@APP_DIR@/run-tapo-cloud-viewer
+Icon=@APP_DIR@/tapo-cloud-viewer.png
+Terminal=false
+Categories=AudioVideo;Video;Network;
+StartupNotify=true
+StartupWMClass=it.topo.TapoCloudView

@@ -1,0 +1,14 @@
+cameras.json
+streams/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+session.json
+**/session.json
+credentials.json
+*credentials*.json
+*.pem
+*.key
+*.log

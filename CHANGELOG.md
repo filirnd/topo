@@ -13,6 +13,12 @@ All notable changes to Topo are documented here.
 - More camera models and additional Tapo features will be evaluated with
   community testing.
 
+## [0.1.1] - 2026-10-14
+
+### Added
+
+- Info button linking directly to the Topo project website.
+
 ## [0.1.0] - 2026-10-14
 
 ### Added

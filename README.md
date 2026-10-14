@@ -58,6 +58,7 @@ GTK/WebKit desktop window; no browser needs to be opened manually.
 - Stream loading state, error state, and retry button.
 - Responsive layout for different window sizes.
 - Linux desktop launcher with the Topo icon.
+- In-app Info button linking to the Topo project website.
 
 ## Tested cameras
 

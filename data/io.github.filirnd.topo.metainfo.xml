@@ -19,7 +19,7 @@
   <provides>
     <binary>topo</binary>
   </provides>
-  <url type="homepage">https://github.com/filirnd/topo</url>
+  <url type="homepage">https://filirnd.github.io/topo/</url>
   <url type="bugtracker">https://github.com/filirnd/topo/issues</url>
   <url type="vcs-browser">https://github.com/filirnd/topo</url>
   <categories>
@@ -40,6 +40,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.1" date="2026-10-14">
+      <description>
+        <p>Added an Info button that opens the Topo project website.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-14">
       <description>
         <p>Initial Flatpak distribution of Topo.</p>

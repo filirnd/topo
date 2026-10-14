@@ -13,8 +13,9 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gio", "2.0")
 gi.require_version("WebKit2", "4.1")
-from gi.repository import Gtk, WebKit2  # noqa: E402
+from gi.repository import Gio, Gtk, WebKit2  # noqa: E402
 
 from tapo_cloud_app import PRODUCT_NAME, CloudAppContext, Handler  # noqa: E402
 
@@ -67,11 +68,26 @@ class TapoDesktop(Gtk.Application):
         webview = WebKit2.WebView()
         settings = webview.get_settings()
         settings.set_property("enable-developer-extras", False)
+        webview.connect("decide-policy", self._handle_navigation)
         # The UI is served locally, but WebKit may otherwise reuse an older
         # cached index.html after an application update.
         webview.load_uri(f"http://127.0.0.1:{port}/?ui={uuid.uuid4().hex}")
         self.window.add(webview)
         self.window.show_all()
+
+    @staticmethod
+    def _handle_navigation(_webview, decision, decision_type):
+        """Open external project links in the user's default browser."""
+        if decision_type == WebKit2.PolicyDecisionType.NAVIGATION_ACTION:
+            action = decision.get_navigation_action()
+            request = action.get_request() if action is not None else None
+            uri = request.get_uri() if request is not None else ""
+            if uri.startswith(("http://", "https://")) and not uri.startswith("http://127.0.0.1:"):
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+                decision.ignore()
+                return True
+        decision.use()
+        return False
 
     def do_shutdown(self) -> None:  # noqa: N802 - GTK virtual method
         if self.server is not None:

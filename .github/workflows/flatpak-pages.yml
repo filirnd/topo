@@ -26,7 +26,7 @@ jobs:
           test -n "$GPG_PRIVATE_KEY"
           gpg_home="${GNUPGHOME:-}"
           if [ -z "$gpg_home" ]; then
-            gpg_home="$(gpgconf --list-dirs homedir)"
+            gpg_home="$(env -u GNUPGHOME gpgconf --list-dirs homedir)"
           fi
           test -n "$gpg_home"
           export GNUPGHOME="$gpg_home"

@@ -81,7 +81,8 @@
     .release ul { margin-top: 8px; }
 
     .screenshot { display: block; width: 100%; margin-top: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 14px 30px var(--shadow); }
-    .back-to-top { position: fixed; right: 22px; bottom: 22px; z-index: 10; display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid var(--ink); border-radius: 50%; background: var(--ink); color: var(--paper-strong); text-decoration: none; font-size: 1.25rem; font-weight: 900; box-shadow: 0 8px 18px var(--shadow); }
+    .back-to-top { position: fixed; right: 22px; bottom: 22px; z-index: 10; display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid var(--ink); border-radius: 10px; background: var(--ink); color: var(--paper-strong); text-decoration: none; font-size: 1.25rem; font-weight: 900; box-shadow: 0 8px 18px var(--shadow); opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity .18s ease, transform .18s ease, background .18s ease; }
+    .back-to-top.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
     .back-to-top:hover { background: var(--accent-strong); color: var(--ink); }
     footer { padding: 26px 0 34px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: .88rem; }
     .footer-row { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
@@ -193,6 +194,17 @@
       <span><a href="https://github.com/filirnd/topo/issues">Report an issue</a> · <a href="https://github.com/filirnd/topo/blob/main/README.md">Documentation</a></span>
     </div>
   </footer>
-  <a class="back-to-top" href="#top" aria-label="Back to top" title="Back to top">↑</a>
+  <a class="back-to-top" href="#top" aria-label="Back to top" title="Back to top" aria-hidden="true" tabindex="-1">↑</a>
+  <script>
+    const backToTop = document.querySelector('.back-to-top');
+    function updateBackToTop() {
+      const visible = window.scrollY > 320;
+      backToTop.classList.toggle('visible', visible);
+      backToTop.setAttribute('aria-hidden', String(!visible));
+      backToTop.tabIndex = visible ? 0 : -1;
+    }
+    window.addEventListener('scroll', updateBackToTop, { passive: true });
+    updateBackToTop();
+  </script>
 </body>
 </html>

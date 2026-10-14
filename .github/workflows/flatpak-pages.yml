@@ -24,6 +24,11 @@ jobs:
         shell: bash
         run: |
           test -n "$GPG_PRIVATE_KEY"
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            mkdir -p "$GNUPGHOME"
+            printf 'allow-preset-passphrase\n' >> "$GNUPGHOME/gpg-agent.conf"
+            gpgconf --kill gpg-agent || true
+          fi
           printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
           fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')"
           keygrip="$(gpg --batch --with-keygrip --with-colons --list-secret-keys | awk -F: '$1 == "grp" { print $10; exit }')"
@@ -31,8 +36,7 @@ jobs:
           test -n "$keygrip"
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
           if [ -n "$GPG_PASSPHRASE" ]; then
-            printf 'allow-preset-passphrase\n' >> "$GNUPGHOME/gpg-agent.conf"
-            gpg-connect-agent reloadagent /bye
+            gpgconf --launch gpg-agent
             /usr/libexec/gpg-preset-passphrase --preset "$keygrip" <<< "$GPG_PASSPHRASE"
           fi
 

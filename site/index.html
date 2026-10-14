@@ -57,6 +57,8 @@
     .install-card .label { color: var(--ink-soft); font-size: .8rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
     .install-card h2 { margin-top: 8px; }
     .install-card p { color: var(--ink-soft); font-size: .94rem; }
+    .install-steps { margin: -4px 0 20px; padding-left: 20px; color: var(--ink-soft); font-size: .9rem; }
+    .install-steps li + li { margin-top: 6px; }
     code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
     pre { overflow-x: auto; margin: 16px 0 20px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-strong); color: var(--ink); font-size: .8rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
     .notice { margin-top: 30px; padding: 14px 16px; border-left: 4px solid var(--accent-strong); background: var(--paper-strong); color: var(--ink-soft); font-size: .92rem; }
@@ -126,7 +128,13 @@
         <pre><code>flatpak install --user https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref</code></pre>
         <p>Launch it from your desktop menu or with:</p>
         <pre><code>flatpak run io.github.filirnd.topo</code></pre>
-        <a class="button" href="io.github.filirnd.topo.flatpakref">Download .flatpakref</a>
+        <p><strong>Prefer a graphical installation?</strong></p>
+        <ol class="install-steps">
+          <li>Click <strong>Download .flatpakref</strong> below.</li>
+          <li>Open the downloaded file with GNOME Software.</li>
+          <li>Confirm the installation. The Topo repository is added automatically, so future updates appear through Flatpak.</li>
+        </ol>
+        <a class="button" href="io.github.filirnd.topo.flatpakref" download>Download .flatpakref</a>
       </aside>
     </section>
 

@@ -164,6 +164,21 @@ Both commands write the installer to `windows/out/`. Full build requirements
 and troubleshooting notes are in
 [`windows/LOCAL_BUILD.md`](windows/LOCAL_BUILD.md).
 
+### Maintainer release flow
+
+The Windows workflow also publishes the installer as a GitHub Release when a
+semantic version tag is pushed. For example:
+
+```bash
+git tag v0.1.3
+git push origin v0.1.3
+```
+
+The workflow builds the installer, aligns the Windows app version with the
+tag, generates `SHA256SUMS.txt`, and attaches both files to the release. A
+normal push to `main` only runs the build and stores the result as a temporary
+Actions artifact; it does not create a release.
+
 ## Flatpak distribution
 
 Topo can also be distributed through a self-hosted Flatpak repository on

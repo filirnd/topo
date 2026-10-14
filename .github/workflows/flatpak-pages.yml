@@ -5,16 +5,20 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Flatpak repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
       options: --privileged
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Import repository signing key
         id: gpg
@@ -81,14 +85,14 @@ jobs:
           echo "pages=pages" >> "$GITHUB_OUTPUT"
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: pages
 
   deploy:
     name: Deploy GitHub Pages
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       pages: write
       id-token: write
@@ -98,4 +102,4 @@ jobs:
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

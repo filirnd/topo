@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Topo is a standalone Linux desktop app for viewing and controlling Tapo cameras through the Tapo cloud.">
+  <meta name="description" content="Topo is a standalone Linux and Windows desktop app for viewing and controlling Tapo cameras through the Tapo cloud.">
   <meta name="theme-color" content="#3f3834">
   <link rel="icon" href="https://raw.githubusercontent.com/filirnd/topo/main/linux/tapo-cloud-viewer.png">
   <title>Topo - desktop app for Tapo camera</title>
@@ -102,6 +102,7 @@
       </a>
       <nav aria-label="Primary navigation">
         <a href="#features">Features</a>
+        <a href="#windows">Windows</a>
         <a href="#changelog">Changelog</a>
         <a href="https://github.com/filirnd/topo">GitHub</a>
       </nav>
@@ -111,11 +112,12 @@
   <main class="shell">
     <section class="hero" aria-labelledby="page-title">
       <div>
-        <p class="eyebrow">Linux · Flatpak · Tapo Cloud</p>
+        <p class="eyebrow">Linux · Windows · Tapo Cloud</p>
         <h1 id="page-title">See your camera directly from your desktop.</h1>
-        <p class="hero-copy">Topo is a standalone Linux desktop app for viewing and controlling multiple Tapo cameras from one clean window. It uses the <strong>Tapo cloud relay</strong>, so there is no RTSP setup, port forwarding, VPN, or direct access to your home network.</p>
+        <p class="hero-copy">Topo is a standalone desktop app for viewing and controlling multiple Tapo cameras from one clean window. It uses the <strong>Tapo cloud relay</strong>, so there is no RTSP setup, port forwarding, VPN, or direct access to your home network.</p>
         <div class="actions">
           <a class="button" href="io.github.filirnd.topo.flatpakref">Install with Flatpak</a>
+          <a class="button secondary" href="https://github.com/filirnd/topo/releases">Windows release</a>
           <a class="button secondary" href="https://github.com/filirnd/topo">View source on GitHub</a>
         </div>
         <div class="notice"><strong>Experimental software.</strong> Topo is an independent third-party project and uses undocumented Tapo cloud endpoints. It is not affiliated with or endorsed by TP-Link or Tapo.</div>
@@ -138,6 +140,32 @@
       </aside>
     </section>
 
+    <section id="windows" class="split" aria-labelledby="windows-title">
+      <article class="panel">
+        <p class="eyebrow">Windows release</p>
+        <h2 id="windows-title">Install the desktop app</h2>
+        <p>Download the latest x64 installer from GitHub Releases and run the `.exe`. The installer includes the Topo backend and FFmpeg, so Python and Node.js are not required.</p>
+        <ol class="install-steps">
+          <li>Open the <a href="https://github.com/filirnd/topo/releases">Topo Releases</a> page.</li>
+          <li>Download the Windows `.exe` installer from the latest release.</li>
+          <li>Run it and launch Topo from the desktop or Start Menu.</li>
+        </ol>
+        <div class="notice"><strong>Windows SmartScreen notice.</strong> Topo is not code-signed by a Windows-trusted publisher yet. Windows may show an unknown-publisher warning; verify that the installer came from the official GitHub repository, then choose <strong>More info → Run anyway</strong> if you trust the source.</div>
+      </article>
+
+      <article class="panel">
+        <p class="eyebrow">Build it yourself</p>
+        <h2>Prefer a locally built installer?</h2>
+        <p>Inspect the source and build the installer locally instead of using the prebuilt binary.</p>
+        <pre><code># Linux with Docker
+./windows/build-local.sh
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File .\windows\build-local.ps1</code></pre>
+        <p>The installer is written to <code>windows/out/</code>. See the <a href="https://github.com/filirnd/topo/blob/main/windows/LOCAL_BUILD.md">local build guide</a> for prerequisites.</p>
+      </article>
+    </section>
+
     <section id="features" aria-labelledby="features-title">
       <div class="section-heading">
         <p class="eyebrow">What you get</p>
@@ -150,7 +178,7 @@
         <article class="feature"><div class="feature-icon">↕</div><h3>Pan and tilt</h3><p>Move compatible cameras from a compact control panel with selectable movement steps.</p></article>
         <article class="feature"><div class="feature-icon">⛶</div><h3>Fullscreen viewing</h3><p>Open any camera fullscreen with a button or double-click, while keeping controls in a separate drawer.</p></article>
         <article class="feature"><div class="feature-icon">⌁</div><h3>MFA and sessions</h3><p>Sign in with Tapo app or email verification, reuse a saved session, and log out when you want a fresh login.</p></article>
-        <article class="feature"><div class="feature-icon">▣</div><h3>Simple distribution</h3><p>Install through this signed Flatpak repository hosted on GitHub Pages and receive updates through Flatpak.</p></article>
+        <article class="feature"><div class="feature-icon">▣</div><h3>Simple distribution</h3><p>Install through the signed Flatpak repository on Linux or download the Windows installer from GitHub Releases.</p></article>
       </div>
     </section>
 
@@ -171,12 +199,12 @@
         <p class="eyebrow">Project updates</p>
         <h2>Latest changelog</h2>
         <div class="release">
-          <div class="release-title"><strong>Unreleased</strong><span>in development</span></div>
-          <ul>
-            <li>Fixed consecutive privacy enable/disable operations without requiring a full camera refresh.</li>
-            <li>Reset the affected camera's cloud media relay after privacy changes.</li>
-            <li>Refresh only the camera whose state changed.</li>
-          </ul>
+          <div class="release-title"><strong>0.1.2</strong><time datetime="2026-10-14">14 Oct 2026</time></div>
+          <p>Kept the fullscreen Controls button centered when the command drawer opens.</p>
+        </div>
+        <div class="release">
+          <div class="release-title"><strong>0.1.1</strong><time datetime="2026-10-14">14 Oct 2026</time></div>
+          <p>Added an Info button linking directly to the Topo project website.</p>
         </div>
         <div class="release">
           <div class="release-title"><strong>0.1.0</strong><time datetime="2026-10-14">14 Oct 2026</time></div>

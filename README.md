@@ -6,11 +6,12 @@
 
 <p align="center">
   <strong>Desktop app for Tapo camera</strong><br>
-  View and control your Tapo cameras from a clean Linux desktop window.
+  View and control your Tapo cameras from a clean Linux or Windows desktop app.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Linux-3f3834?style=flat-square" alt="Linux">
+  <img src="https://img.shields.io/badge/platform-Windows-3f3834?style=flat-square" alt="Windows">
   <img src="https://img.shields.io/badge/streaming-Tapo%20Cloud-d5bdaf?style=flat-square&labelColor=3f3834" alt="Tapo Cloud streaming">
   <img src="https://img.shields.io/badge/status-experimental-e3d5ca?style=flat-square&labelColor=3f3834" alt="Experimental status">
 </p>
@@ -19,8 +20,8 @@
   <img src="docs/screen.png" width="900" alt="Topo camera dashboard with privacy-blurred camera previews">
 </p>
 
-Topo is a standalone Linux desktop application for viewing and controlling
-Tapo cameras through the Tapo cloud account.
+Topo is a standalone Linux and Windows desktop application for viewing and
+controlling Tapo cameras through the Tapo cloud account.
 
 It uses Tapo's cloud relay and does not require RTSP, port forwarding, a VPN,
 or direct access to the camera's home network. The application starts a local
@@ -34,7 +35,7 @@ GTK/WebKit desktop window; no browser needs to be opened manually.
 | | |
 |---|---|
 | **Connection** | Tapo cloud relay — no RTSP, port forwarding, VPN, or camera LAN access |
-| **Desktop shell** | GTK 3 + WebKitGTK 4.1 |
+| **Desktop shell** | GTK 3 + WebKitGTK 4.1 on Linux; Electron on Windows |
 | **Video pipeline** | Cloud relay decoded by FFmpeg and shown in the desktop UI |
 | **Authentication** | Tapo account login with MFA and reusable session |
 | **Controls** | Privacy toggle, relay check, pan/tilt, and per-camera fullscreen |
@@ -58,6 +59,7 @@ GTK/WebKit desktop window; no browser needs to be opened manually.
 - Stream loading state, error state, and retry button.
 - Responsive layout for different window sizes.
 - Linux desktop launcher with the Topo icon.
+- Windows x64 NSIS installer with a desktop and Start Menu shortcut.
 - In-app Info button linking to the Topo project website.
 
 ## Tested cameras
@@ -95,7 +97,7 @@ requirements manually before running the installer.
 On Fedora, FFmpeg may require an additional multimedia repository such as RPM
 Fusion, depending on the system configuration.
 
-## Installation
+## Linux installation
 
 Clone the repository and run the Linux installer:
 
@@ -122,6 +124,45 @@ To uninstall:
 ```bash
 ./linux/uninstall.sh
 ```
+
+## Windows installation
+
+Download the latest Windows installer from the
+[GitHub Releases page](https://github.com/filirnd/topo/releases), then run the
+`.exe` installer. Topo installs per user and creates a desktop shortcut and a
+Start Menu entry.
+
+Topo is currently distributed without a code-signing certificate from a
+Windows-trusted publisher. Windows may therefore show a **Windows protected
+your PC** or **Unknown publisher** warning. Before continuing, make sure the
+installer was downloaded from the official Topo GitHub repository. In the
+SmartScreen dialog, select **More info** and then **Run anyway** if you trust
+the source.
+
+The Windows installer is x64. It includes the Topo backend and FFmpeg, so end
+users do not need to install Python, Node.js, or FFmpeg separately.
+
+### Build the Windows installer yourself
+
+If you do not want to run a prebuilt installer, inspect the source and build
+it locally. The repository provides both a Linux/Docker build and a native
+Windows PowerShell build:
+
+On Linux, with Docker installed:
+
+```bash
+./windows/build-local.sh
+```
+
+On Windows, with Python 3.12 and the current Node.js LTS release installed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\windows\build-local.ps1
+```
+
+Both commands write the installer to `windows/out/`. Full build requirements
+and troubleshooting notes are in
+[`windows/LOCAL_BUILD.md`](windows/LOCAL_BUILD.md).
 
 ## Flatpak distribution
 
@@ -184,7 +225,8 @@ choose either the Tapo app notification or the email verification code.
 The application stores a session token at:
 
 ```text
-~/.local/state/tapo-cloud-probe/session.json
+Linux:   ~/.local/state/tapo-cloud-probe/session.json
+Windows: %LOCALAPPDATA%\Topo\state\session.json
 ```
 
 The password is not stored. Use **Logout** to clear the session and require a
@@ -205,7 +247,9 @@ To force a fresh login when launching the installed wrapper manually:
   validation and hostname verification remain enabled; the app does not
   provide a TLS verification bypass.
 - The local HTTP service is bound to `127.0.0.1` and is used only by the
-  desktop WebKit window.
+  desktop application window.
+- The Windows build is not code-signed yet; verify its source before bypassing
+  the SmartScreen warning.
 
 ## Development
 

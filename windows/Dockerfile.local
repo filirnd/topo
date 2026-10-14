@@ -1,0 +1,27 @@
+FROM electronuserland/builder:wine
+
+USER root
+
+ARG PYTHON_VERSION=3.12.10
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl python3-pip unzip xvfb xauth \
+    && mkdir -p /tmp/wheels \
+    && python3 -m pip download --only-binary=:all: --platform win_amd64 --python-version 3.12 --implementation cp --abi cp312 --dest /tmp/wheels pyinstaller pefile pywin32-ctypes \
+    && rm -rf /var/lib/apt/lists/*
+
+# PyInstaller builds for the operating system where it runs. The Windows
+# embeddable Python distribution avoids the graphical Windows installer and
+# lets this Linux build produce the same backend executable as CI.
+RUN mkdir -p /root/.wine/drive_c/Python312 \
+    && curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip" \
+      -o /tmp/python.zip \
+    && unzip -q /tmp/python.zip -d /root/.wine/drive_c/Python312 \
+    && sed -i 's/^#import site/import site/' /root/.wine/drive_c/Python312/python312._pth \
+    && curl -fsSL https://bootstrap.pypa.io/pip/pip.pyz \
+      -o /root/.wine/drive_c/Python312/pip.pyz \
+    && xvfb-run -a wine 'C:\\Python312\\python.exe' 'C:\\Python312\\pip.pyz' install --no-index --find-links 'Z:\\tmp\\wheels' pyinstaller \
+    && rm /tmp/python.zip
+
+ENV WINEDEBUG=-all
+WORKDIR /project

@@ -69,6 +69,40 @@ def session_path() -> Path:
     return root / "tapo-cloud-probe" / "session.json"
 
 
+def terminal_uuid_path() -> Path:
+    """Return the stable terminal identifier used by Tapo MFA."""
+    return session_path().with_name("terminal_uuid")
+
+
+def load_or_create_terminal_uuid() -> str:
+    """Keep one terminal UUID per installation so push MFA can recognize it."""
+    path = terminal_uuid_path()
+    try:
+        value = path.read_text(encoding="ascii").strip()
+        if value:
+            return value
+    except (FileNotFoundError, OSError, UnicodeError):
+        pass
+    value = uuid.uuid4().hex.upper()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value + "\n", encoding="ascii")
+        os.chmod(path, 0o600)
+    except OSError:
+        # A non-persistent UUID is still enough for email MFA and keeps the
+        # rest of the client usable if the state directory is read-only.
+        pass
+    return value
+
+
+def reset_terminal_uuid() -> None:
+    """Forget the local terminal identity so the next login can request MFA."""
+    try:
+        terminal_uuid_path().unlink()
+    except FileNotFoundError:
+        pass
+
+
 def load_session() -> dict | None:
     path = session_path()
     try:
@@ -91,6 +125,16 @@ def save_session(base_url: str, result: dict) -> Path:
         "refreshToken": result.get("refreshToken"),
         "saved_at": int(time.time()),
     }
+    # Windows can briefly lock the file created by mkstemp (for example while
+    # Defender scans it), making os.replace() fail with WinError 32. The
+    # session is a small recoverable cache, so write it directly there. On
+    # POSIX keep the atomic replace used by the CLI and Linux app.
+    if os.name == "nt":
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, separators=(",", ":"))
+            handle.write("\n")
+        os.chmod(path, 0o600)
+        return path
     descriptor, temporary_name = tempfile.mkstemp(
         prefix="session.", suffix=".tmp", dir=str(path.parent)
     )
@@ -175,7 +219,7 @@ class TapoCloud:
         # Keep a compatibility fallback for older regional gateways.
         self._services_sync_version = "v2"
         self.last_cipc_player_id = ""
-        self.terminal_uuid = uuid.uuid4().hex.upper()
+        self.terminal_uuid = load_or_create_terminal_uuid()
         self.verify_context = create_verify_context()
 
     def close(self) -> None:
@@ -637,7 +681,13 @@ class TapoCloud:
             "refreshTokenNeeded": False,
             "supportBindAccount": False,
             "terminalMeta": "1",
-            "terminalName": f"{PRODUCT_NAME} Linux",
+            # Keep the API-compatible Android platform value above, but give
+            # Tapo an accurate terminal label for each desktop client.
+            "terminalName": (
+                f"{PRODUCT_NAME} Windows"
+                if os.name == "nt"
+                else f"{PRODUCT_NAME} Linux"
+            ),
             "terminalUUID": self.terminal_uuid,
         }
         response = self.post(LOGIN_URL, "/api/v2/account/login", payload, token=False)
@@ -697,8 +747,11 @@ class TapoCloud:
             "terminalUUID": self.terminal_uuid,
         }
         sent = self.post(base_url, endpoint, request_payload, token=False)
-        if error_code(sent) != 0:
-            raise RuntimeError(f"MFA code request failed: code {error_code(sent)}")
+        outer_code = error_code(sent)
+        inner_code = error_code(result_of(sent))
+        if outer_code != 0 or inner_code != 0:
+            code = inner_code if inner_code != 0 else outer_code
+            raise RuntimeError(f"MFA code request failed: code {code}")
 
     def verify_mfa(
         self,
@@ -724,8 +777,11 @@ class TapoCloud:
             },
             token=False,
         )
-        if error_code(checked) != 0:
-            raise RuntimeError(f"MFA code rejected: code {error_code(checked)}")
+        outer_code = error_code(checked)
+        inner_code = error_code(result_of(checked))
+        if outer_code != 0 or inner_code != 0:
+            code = inner_code if inner_code != 0 else outer_code
+            raise RuntimeError(f"MFA code rejected: code {code}")
         return result_of(checked)
 
     def list_cameras(self, base_url: str) -> list[dict]:
@@ -1052,6 +1108,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.fresh_login:
+        clear_session()
+        reset_terminal_uuid()
     client = TapoCloud()
     base_url = ""
     devices = None

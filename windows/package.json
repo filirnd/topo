@@ -43,7 +43,7 @@
           "arch": ["x64"]
         }
       ],
-      "icon": "../data/io.github.filirnd.topo.png"
+      "icon": "../data/io.github.filirnd.topo.ico"
     },
     "nsis": {
       "oneClick": false,

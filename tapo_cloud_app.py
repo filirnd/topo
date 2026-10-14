@@ -33,6 +33,7 @@ from tapo_cloud_probe import (
     clear_session,
     error_code,
     load_session,
+    reset_terminal_uuid,
     result_of,
     save_session,
 )
@@ -504,6 +505,7 @@ class CloudAppContext:
         self.pending_mfa: dict | None = None
         if fresh_login:
             clear_session()
+            reset_terminal_uuid()
         else:
             self._restore_session()
 
@@ -619,6 +621,10 @@ class CloudAppContext:
             self.pending_mfa = None
         self._replace_state(None)
         clear_session()
+        # A logout must also forget this installation's Tapo terminal identity.
+        # Otherwise Tapo may consider the next login trusted and skip MFA,
+        # which makes Linux and Windows behave differently after logout.
+        reset_terminal_uuid()
 
     def close(self) -> None:
         self._replace_state(None)
@@ -880,7 +886,8 @@ def main() -> int:
 
     handler_class = type("CloudAppHandler", (Handler,), {"context": context})
     server = ThreadingHTTPServer((args.host, args.port), handler_class)
-    print(f"{PRODUCT_NAME} available at http://{args.host}:{args.port}", flush=True)
+    actual_port = server.server_address[1]
+    print(f"{PRODUCT_NAME} available at http://{args.host}:{actual_port}", flush=True)
     print("Press Ctrl+C to stop the app.", flush=True)
     try:
         server.serve_forever()

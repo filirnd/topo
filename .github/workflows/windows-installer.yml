@@ -52,7 +52,7 @@ jobs:
         working-directory: windows
         shell: pwsh
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run dist
 
       - name: Upload installer artifact

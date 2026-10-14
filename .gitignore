@@ -24,3 +24,5 @@ flatpak-repo/
 windows/node_modules/
 windows/dist/
 windows/out/
+windows/.pyinstaller-build/
+windows/.pyinstaller-spec/

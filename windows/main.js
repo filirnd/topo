@@ -8,6 +8,8 @@ const LOCAL_HOST = '127.0.0.1';
 
 let backend = null;
 let mainWindow = null;
+let isQuitting = false;
+let backendStopTimer = null;
 
 function backendCommand() {
   if (app.isPackaged) {
@@ -21,7 +23,7 @@ function backendCommand() {
 
   const projectRoot = path.resolve(__dirname, '..');
   return {
-    command: process.env.TOPO_BACKEND || 'python',
+    command: process.env.TOPO_BACKEND || (process.platform === 'win32' ? 'python' : 'python3'),
     args: [path.join(projectRoot, 'tapo_cloud_app.py')],
     cwd: projectRoot,
     ffmpeg: process.env.TOPO_FFMPEG || 'ffmpeg',
@@ -46,6 +48,7 @@ function createWindow(port) {
     minHeight: 600,
     title: 'Topo - desktop app for Tapo camera',
     icon: applicationIcon(),
+    show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -63,11 +66,30 @@ function createWindow(port) {
     openExternal(url);
     return { action: 'deny' };
   });
-  mainWindow.loadURL(`http://${LOCAL_HOST}:${port}/?ui=${Date.now()}`);
+  const appUrl = `http://${LOCAL_HOST}:${port}/?ui=${Date.now()}`;
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    console.error(`[Topo UI] Failed to load ${validatedURL}: ${errorCode} ${errorDescription}`);
+    dialog.showErrorBox(
+      'Topo could not load',
+      `The local interface could not be loaded.\n\n${errorDescription} (${errorCode})\n${validatedURL}`,
+    );
+    app.quit();
+  });
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[Topo UI] ${message} (${sourceId}:${line})`);
+  });
+  mainWindow.webContents.once('did-finish-load', () => {
+    console.log(`[Topo UI] Loaded ${appUrl}`);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+    setTimeout(checkForUpdate, 1800);
+  });
+  mainWindow.loadURL(appUrl).catch((error) => {
+    console.error(`[Topo UI] loadURL failed: ${error.stack || error.message}`);
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-    setTimeout(checkForUpdate, 1800);
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
   });
 }
 
@@ -82,6 +104,7 @@ function startBackend() {
     cwd: runtime.cwd,
     env: environment,
     windowsHide: true,
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -97,17 +120,54 @@ function startBackend() {
     if (output.length > 8192) output = output.slice(-4096);
   };
   backend.stdout.on('data', handleOutput);
-  backend.stderr.on('data', (chunk) => console.error(`[Topo backend] ${chunk}`));
+  backend.stderr.on('data', (chunk) => console.error(`[Topo backend] ${chunk.toString().trimEnd()}`));
   backend.once('error', (error) => {
     dialog.showErrorBox('Topo could not start', error.message);
     app.quit();
   });
   backend.once('exit', (code) => {
-    if (!windowCreated && code !== 0) {
-      dialog.showErrorBox('Topo could not start', `The cloud backend exited with code ${code}.`);
+    if (backendStopTimer) {
+      clearTimeout(backendStopTimer);
+      backendStopTimer = null;
+    }
+    if (!isQuitting && code !== 0) {
+      dialog.showErrorBox(
+        'Topo backend stopped',
+        `The cloud backend exited with code ${code ?? 'unknown'}. Check the console/log output for details.`,
+      );
       app.quit();
     }
   });
+}
+
+function stopBackend() {
+  if (!backend || backend.exitCode !== null) return;
+  const processToStop = backend;
+
+  const forceFallback = () => {
+    if (processToStop.exitCode === null && !processToStop.killed) processToStop.kill();
+  };
+
+  if (process.platform === 'win32') {
+    // backend.exe starts FFmpeg workers. Node's child.kill() only targets the
+    // direct process, so terminate the complete Windows process tree.
+    const killer = spawn('taskkill', ['/PID', String(processToStop.pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    killer.once('error', forceFallback);
+    killer.once('exit', (code) => { if (code !== 0) forceFallback(); });
+  } else {
+    try {
+      // The backend is detached on POSIX, so terminate its whole process group.
+      process.kill(-processToStop.pid, 'SIGTERM');
+    } catch (_) {
+      forceFallback();
+    }
+  }
+
+  backendStopTimer = setTimeout(forceFallback, 4000);
+  backendStopTimer.unref();
 }
 
 function compareVersions(left, right) {
@@ -163,6 +223,8 @@ async function checkForUpdate() {
 
 app.whenReady().then(startBackend);
 app.on('before-quit', () => {
-  if (backend && !backend.killed) backend.kill();
+  if (isQuitting) return;
+  isQuitting = true;
+  stopBackend();
 });
 app.on('window-all-closed', () => app.quit());

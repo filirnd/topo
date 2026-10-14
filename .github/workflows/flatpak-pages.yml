@@ -105,21 +105,58 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          # This deployment was left in progress by the first failed Pages
-          # workflow and blocks every later deployment. The API accepts the
-          # deployment commit SHA as an identifier.
-          gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/pages/deployments/c966d1d0c7d32a3c74938ad50f2d7e66e5d64856/cancel" \
-            || true
+          set -euo pipefail
+
+          # The first failed Pages run left this deployment in progress. The
+          # API accepts either its numeric ID or its commit SHA.
+          legacy_sha="c966d1d0c7d32a3c74938ad50f2d7e66e5d64856"
+
+          cancel_if_active() {
+            local deployment_sha="$1"
+            local status
+            status="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/pages/deployments/${deployment_sha}" \
+              --jq '.status' 2>/dev/null || true)"
+            case "$status" in
+              queued|in_progress)
+                echo "Cancelling Pages deployment ${deployment_sha} (status: ${status})"
+                gh api --method POST \
+                  "repos/${GITHUB_REPOSITORY}/pages/deployments/${deployment_sha}/cancel"
+                ;;
+              '')
+                echo "Pages deployment ${deployment_sha} is already gone or inaccessible."
+                ;;
+              *)
+                echo "Pages deployment ${deployment_sha} is already terminal (status: ${status})."
+                ;;
+            esac
+          }
+
+          cancel_if_active "$legacy_sha"
+
           while IFS= read -r deployment_sha; do
             [ -z "$deployment_sha" ] && continue
-            if [ "$deployment_sha" = "$GITHUB_SHA" ]; then
-              continue
-            fi
-            gh api --method POST \
-              "repos/${GITHUB_REPOSITORY}/pages/deployments/${deployment_sha}/cancel" \
-              || true
+            [ "$deployment_sha" = "$GITHUB_SHA" ] && continue
+            cancel_if_active "$deployment_sha"
           done < <(gh api "repos/${GITHUB_REPOSITORY}/pages/deployments?per_page=100" --jq '.[].sha')
+
+          # Give the Pages service a moment to commit the cancellation, then
+          # fail clearly instead of creating another deployment over a lock.
+          for attempt in 1 2 3 4 5; do
+            status="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/pages/deployments/${legacy_sha}" \
+              --jq '.status' 2>/dev/null || true)"
+            case "$status" in
+              queued|in_progress)
+                echo "Legacy Pages deployment is still ${status}; retry ${attempt}/5."
+                sleep 5
+                ;;
+              *)
+                echo "Legacy Pages deployment is no longer active (status: ${status:-not found})."
+                break
+                ;;
+            esac
+          done
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v5

@@ -402,6 +402,13 @@ class CloudAppState:
             worker.close()
         self.client.close()
 
+    def reset_worker(self, index: int) -> None:
+        """Drop a relay that may have become stale after a camera state change."""
+        with self.workers_lock:
+            worker = self.workers.pop(index, None)
+        if worker is not None:
+            worker.close()
+
     def privacy_state(self, index: int) -> tuple[bool | None, str]:
         now = time.monotonic()
         with self.privacy_lock:
@@ -427,6 +434,11 @@ class CloudAppState:
         with self.privacy_lock:
             self.privacy_states[index] = state
             self.privacy_checked_at[index] = time.monotonic()
+        # Privacy mode stops the camera media producer. Releasing the old
+        # relay is important when privacy is disabled again: otherwise the
+        # next preview can attach to a relay that was opened before the lens
+        # state changed and will never produce video again.
+        self.reset_worker(index)
         return state
 
     def ptz_state(self, index: int) -> tuple[bool | None, str]:
@@ -452,31 +464,28 @@ class CloudAppState:
     def move_camera(self, index: int, x: int, y: int) -> None:
         self.client.move_motor(self.base_url, self.devices[index], x, y)
 
+    def public_camera(self, index: int) -> dict:
+        device = self.devices[index]
+        cloud_status = device.get("status")
+        privacy, privacy_error = self.privacy_state(index)
+        ptz, ptz_error = self.ptz_state(index)
+        return {
+            "id": index,
+            "name": device.get("alias") or device.get("deviceName") or f"Camera {index + 1}",
+            "model": device.get("deviceModel") or "<n/d>",
+            "status": cloud_status,
+            # The account list's status is not a live reachability check: the
+            # official app can relay a camera that is reported as 0 here.
+            "account_status": cloud_status,
+            "cloud": True,
+            "privacy": privacy,
+            "privacy_error": privacy_error,
+            "ptz": ptz,
+            "ptz_error": ptz_error,
+        }
+
     def public_cameras(self) -> list[dict]:
-        cameras = []
-        for index, device in enumerate(self.devices):
-            cloud_status = device.get("status")
-            privacy, privacy_error = self.privacy_state(index)
-            ptz, ptz_error = self.ptz_state(index)
-            cameras.append(
-                {
-                    "id": index,
-                    "name": device.get("alias") or device.get("deviceName") or f"Camera {index + 1}",
-                    "model": device.get("deviceModel") or "<n/d>",
-                    "status": cloud_status,
-                    # The account list's status is not a live reachability
-                    # check: the official app can relay a camera that is
-                    # reported as 0 here. Keep it visible without calling it
-                    # offline; relay-check is the meaningful cloud probe.
-                    "account_status": cloud_status,
-                    "cloud": True,
-                    "privacy": privacy,
-                    "privacy_error": privacy_error,
-                    "ptz": ptz,
-                    "ptz_error": ptz_error,
-                }
-            )
-        return cameras
+        return [self.public_camera(index) for index in range(len(self.devices))]
 
 
 def json_bytes(value: object) -> bytes:
@@ -486,8 +495,7 @@ def json_bytes(value: object) -> bytes:
 class CloudAppContext:
     """Own the current login, pending MFA flow and authenticated app state."""
 
-    def __init__(self, insecure: bool, fresh_login: bool = False):
-        self.insecure = insecure
+    def __init__(self, fresh_login: bool = False):
         self.lock = threading.RLock()
         self.state: CloudAppState | None = None
         self.pending_mfa: dict | None = None
@@ -500,7 +508,7 @@ class CloudAppContext:
         session = load_session()
         if not session:
             return
-        client = TapoCloud(insecure=self.insecure)
+        client = TapoCloud()
         client.token = str(session.get("token") or "")
         base_url = str(session.get("base_url") or LOGIN_URL)
         if not client.token:
@@ -538,7 +546,7 @@ class CloudAppContext:
         username = username.strip()
         if not username or not password:
             raise ValueError("email and password are required")
-        client = TapoCloud(insecure=self.insecure)
+        client = TapoCloud()
         base_url, result = client.login(username, password)
         process_id = result.get("MFAProcessId")
         if process_id:
@@ -621,9 +629,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_json(self, value: object, status: int = 200) -> None:
         body = json_bytes(value)
+        self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -634,9 +644,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.close_connection = True
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -714,6 +728,20 @@ class Handler(BaseHTTPRequestHandler):
             if state is not None:
                 self.send_json({"cameras": state.public_cameras()})
             return
+        if request_path.startswith("/api/cameras/"):
+            raw_index = request_path[len("/api/cameras/") :].strip("/")
+            if raw_index and "/" not in raw_index:
+                state = self.require_state()
+                if state is None:
+                    return
+                try:
+                    index = int(raw_index)
+                    camera = state.public_camera(index)
+                except (ValueError, IndexError):
+                    self.send_json({"ok": False, "error": "invalid camera"}, 404)
+                    return
+                self.send_json({"camera": camera})
+                return
         if request_path.startswith("/stream/") and request_path.endswith(".mjpg"):
             state = self.require_state()
             if state is None:
@@ -838,12 +866,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=f"{PRODUCT_NAME} desktop app")
     parser.add_argument("--host", default="127.0.0.1", help="local UI address")
     parser.add_argument("--port", type=int, default=8790, help="local UI port")
-    parser.add_argument("--insecure", action="store_true", help="disable TLS verification")
     parser.add_argument("--fresh-login", action="store_true", help="force a new login/MFA")
     args = parser.parse_args()
 
     try:
-        context = CloudAppContext(args.insecure, args.fresh_login)
+        context = CloudAppContext(args.fresh_login)
     except (RuntimeError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

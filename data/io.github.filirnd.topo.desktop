@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Topo - desktop app for Tapo camera
+Comment=View and control Tapo cameras from the cloud
+Exec=topo
+Icon=io.github.filirnd.topo
+Terminal=false
+Categories=AudioVideo;Video;Network;
+StartupNotify=true
+StartupWMClass=io.github.filirnd.topo

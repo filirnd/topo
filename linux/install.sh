@@ -6,8 +6,9 @@ data_root="${XDG_DATA_HOME:-${HOME}/.local/share}"
 app_dir="$data_root/tapo-cloud-viewer"
 applications_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
 icon_dir="$data_root/icons/hicolor/scalable/apps"
-desktop_file="$applications_dir/it.topo.TapoCloudView.desktop"
-legacy_desktop_file="$applications_dir/tapo-cloud-viewer.desktop"
+desktop_file="$applications_dir/io.github.filirnd.topo.desktop"
+legacy_desktop_file="$applications_dir/it.topo.TapoCloudView.desktop"
+legacy_desktop_file_v1="$applications_dir/tapo-cloud-viewer.desktop"
 
 die() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -94,13 +95,15 @@ if ! runtime_ok; then
   runtime_ok || die 'dependencies are still incomplete after installation.'
 fi
 
-mkdir -p "$app_dir/cloud_web" "$applications_dir" "$icon_dir"
+mkdir -p "$app_dir/cloud_web" "$app_dir/certs" "$applications_dir" "$icon_dir"
 rm -f -- "$app_dir/tapo-cloud-viewer.svg" "$icon_dir/topo-tapo-cloud-view.svg"
 rm -f -- "$legacy_desktop_file"
+rm -f -- "$legacy_desktop_file_v1"
 cp "$source_dir/tapo_cloud_app.py" "$app_dir/"
 cp "$source_dir/tapo_cloud_probe.py" "$app_dir/"
 cp "$source_dir/tapo_desktop.py" "$app_dir/"
 cp -a "$source_dir/cloud_web/." "$app_dir/cloud_web/"
+cp "$source_dir/certs/tapo-cloud-roots.pem" "$app_dir/certs/"
 cp "$source_dir/linux/run-tapo-cloud-viewer" "$app_dir/"
 cp "$source_dir/linux/tapo-cloud-viewer.png" "$app_dir/"
 cp "$source_dir/linux/tapo-cloud-viewer.png" "$icon_dir/topo-tapo-cloud-view.png"

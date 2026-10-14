@@ -1,0 +1,88 @@
+name: Flatpak repository
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Flatpak repository
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Import repository signing key
+        id: gpg
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        shell: bash
+        run: |
+          test -n "$GPG_PRIVATE_KEY"
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')"
+          keygrip="$(gpg --batch --with-keygrip --with-colons --list-secret-keys | awk -F: '$1 == "grp" { print $10; exit }')"
+          test -n "$fingerprint"
+          test -n "$keygrip"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            printf 'allow-preset-passphrase\n' >> "$GNUPGHOME/gpg-agent.conf"
+            gpg-connect-agent reloadagent /bye
+            /usr/libexec/gpg-preset-passphrase --preset "$keygrip" <<< "$GPG_PASSPHRASE"
+          fi
+
+      - name: Build signed repository
+        env:
+          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
+        shell: bash
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --disable-rofiles-fuse --force-clean \
+            --default-branch=stable --repo=repo --gpg-sign="$GPG_FINGERPRINT" \
+            build io.github.filirnd.topo.yml
+          flatpak build-update-repo --collection-id=io.github.filirnd.topo \
+            --gpg-sign="$GPG_FINGERPRINT" \
+            --generate-static-deltas repo
+          mkdir -p pages
+          cp -a repo/. pages/
+          cp site/index.html pages/
+          public_key="$(gpg --batch --export "$GPG_FINGERPRINT" | base64 -w0)"
+          cat > pages/io.github.filirnd.topo.flatpakref <<EOF
+          [Flatpak Ref]
+          Name=io.github.filirnd.topo
+          Branch=stable
+          Title=Topo - desktop app for Tapo camera
+          Url=https://filirnd.github.io/topo/
+          RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          IsRuntime=false
+          SuggestRemoteName=topo
+          GPGKey=$public_key
+          Homepage=https://github.com/filirnd/topo
+          Icon=https://raw.githubusercontent.com/filirnd/topo/main/linux/tapo-cloud-viewer.png
+          EOF
+          echo "pages=pages" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+
+  deploy:
+    name: Deploy GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

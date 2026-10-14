@@ -99,7 +99,7 @@ Fusion, depending on the system configuration.
 Clone the repository and run the Linux installer:
 
 ```bash
-git clone https://github.com/<your-user>/topo.git
+git clone https://github.com/filirnd/topo.git
 cd topo
 chmod +x linux/install.sh linux/uninstall.sh
 ./linux/install.sh
@@ -121,6 +121,45 @@ To uninstall:
 ```bash
 ./linux/uninstall.sh
 ```
+
+## Flatpak distribution
+
+Topo can also be distributed through a self-hosted Flatpak repository on
+GitHub Pages. This provides a clickable `.flatpakref` installer and normal
+Flatpak updates without requiring a Flathub submission.
+
+The repository is published automatically by GitHub Actions after the
+repository signing key and GitHub Pages have been configured. The public
+installation link will be:
+
+```text
+https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref
+```
+
+The Flatpak package is cloud-only and needs network access, but it does not
+need RTSP, Tailscale, a Raspberry Pi, or access to the home LAN.
+
+### Maintainer setup
+
+To publish the repository from GitHub Actions:
+
+1. Generate a dedicated GPG signing key and keep its private key out of Git:
+
+   ```bash
+   gpg --quick-gen-key "Topo Flatpak Repository" ed25519 sign 0
+   gpg --armor --export-secret-keys <fingerprint> > topo-flatpak-private.asc
+   ```
+
+2. Add the contents of `topo-flatpak-private.asc` as the repository secret
+   `GPG_PRIVATE_KEY`. Add the key passphrase as `GPG_PASSPHRASE` if the key is
+   protected by one.
+3. In the repository settings, enable **Pages** with **GitHub Actions** as the
+   source.
+4. Push to `main` or run the **Flatpak repository** workflow manually.
+
+The workflow signs the repository, publishes the Flatpak metadata and creates
+the clickable `.flatpakref` installer. Rotate the GPG key only with a planned
+repository migration, because installed clients trust the repository key.
 
 ## Login and session storage
 
@@ -146,10 +185,10 @@ To force a fresh login when launching the installed wrapper manually:
 
 - Treat `session.json` as a credential and never publish it.
 - Do not commit account passwords, session tokens, or private camera data.
-- The launcher currently passes `--insecure` because the certificate chain
-  required by the Tapo cloud login is not trusted in the target environment.
-  This disables TLS certificate validation and should be replaced with a
-  trusted certificate setup before production use.
+- The app adds the TP-Link public cloud root certificates used by the official
+  Tapo Android client to the normal system trust store. TLS certificate
+  validation and hostname verification remain enabled; the app does not
+  provide a TLS verification bypass.
 - The local HTTP service is bound to `127.0.0.1` and is used only by the
   desktop WebKit window.
 
@@ -167,7 +206,6 @@ Useful options:
 ```text
 --fresh-login    force a new Tapo login and MFA flow
 --port PORT      use a specific local HTTP port (0 selects a free port)
---insecure       disable TLS certificate validation (used by the launcher)
 ```
 
 ## AI Full Disclosure

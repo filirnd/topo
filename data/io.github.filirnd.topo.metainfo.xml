@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Topo Author -->
+<component type="desktop-application">
+  <id>io.github.filirnd.topo</id>
+  <name>Topo</name>
+  <summary>Desktop app for Tapo cameras</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <content_rating type="oars-1.1" />
+  <developer id="io.github.filirnd">
+    <name>Topo Author</name>
+  </developer>
+  <description>
+    <p>View and control multiple Tapo cameras from a standalone Linux desktop application using the Tapo cloud service.</p>
+    <p>Topo supports live video, cloud connection checks, privacy mode, pan and tilt, per-camera fullscreen, MFA login, session reuse, and logout.</p>
+    <p>Topo is an independent third-party application and is not affiliated with or endorsed by TP-Link or Tapo. It uses undocumented Tapo cloud endpoints and may require updates when the service changes.</p>
+  </description>
+  <launchable type="desktop-id">io.github.filirnd.topo.desktop</launchable>
+  <provides>
+    <binary>topo</binary>
+  </provides>
+  <url type="homepage">https://github.com/filirnd/topo</url>
+  <url type="bugtracker">https://github.com/filirnd/topo/issues</url>
+  <url type="vcs-browser">https://github.com/filirnd/topo</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>Network</category>
+  </categories>
+  <keywords>
+    <keyword>camera</keyword>
+    <keyword>cloud</keyword>
+    <keyword>security</keyword>
+    <keyword>video</keyword>
+  </keywords>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/filirnd/topo/main/docs/screen.png</image>
+      <caption>Topo dashboard with multiple camera previews and controls</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.0" date="2026-10-14">
+      <description>
+        <p>Initial Flatpak distribution of Topo.</p>
+      </description>
+    </release>
+  </releases>
+</component>

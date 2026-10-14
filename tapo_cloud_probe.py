@@ -42,6 +42,8 @@ APP_VERSION = "3.21.114"
 PRODUCT_NAME = "Topo - desktop app for Tapo camera"
 LOGIN_URL = "https://n-wap-gw.tplinkcloud.com"
 CIPC_URL = "https://cipc.api.cloud"
+ROOT = Path(__file__).resolve().parent
+TP_LINK_ROOTS_PATH = ROOT / "certs" / "tapo-cloud-roots.pem"
 
 # App-level credentials used by the Tapo Android application.  These identify
 # the client application, not the user's Tapo account.
@@ -135,8 +137,23 @@ def mask_id(value: object) -> str:
     return text[:6] + "…" + text[-4:]
 
 
+def create_verify_context() -> ssl.SSLContext:
+    """Build a verified TLS context for the TP-Link cloud endpoints.
+
+    TP-Link serves a private public-facing CA chain that is included by the
+    official Tapo Android client but is not present in many Linux trust stores.
+    Keep normal system roots and add the two public TP-Link roots shipped with
+    that client. Hostname verification and certificate validation stay enabled.
+    """
+    context = ssl.create_default_context()
+    if not TP_LINK_ROOTS_PATH.is_file():
+        raise RuntimeError(f"missing TP-Link trust store: {TP_LINK_ROOTS_PATH}")
+    context.load_verify_locations(cafile=str(TP_LINK_ROOTS_PATH))
+    return context
+
+
 class TapoCloud:
-    def __init__(self, insecure: bool = False):
+    def __init__(self):
         self.token = ""
         self.cipc_url = CIPC_URL
         self._cipc_discovery_base_url = ""
@@ -154,10 +171,7 @@ class TapoCloud:
         self._services_sync_version = "v2"
         self.last_cipc_player_id = ""
         self.terminal_uuid = uuid.uuid4().hex.upper()
-        self.verify_context = ssl.create_default_context()
-        if insecure:
-            self.verify_context.check_hostname = False
-            self.verify_context.verify_mode = ssl.CERT_NONE
+        self.verify_context = create_verify_context()
 
     def close(self) -> None:
         """Close pooled cloud connections when the desktop app exits."""
@@ -169,7 +183,12 @@ class TapoCloud:
                 connection.close()
 
     def _persistent_post(
-        self, url: str, body: bytes, headers: dict[str, str]
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str],
+        *,
+        reuse: bool = True,
     ) -> tuple[int, bytes]:
         """POST over a reusable HTTPS connection.
 
@@ -181,6 +200,22 @@ class TapoCloud:
         if parsed.scheme != "https" or not parsed.hostname:
             raise RuntimeError("cloud endpoint is not HTTPS or has no host")
         port = parsed.port or 443
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        if not reuse:
+            connection = http.client.HTTPSConnection(
+                parsed.hostname,
+                port=port,
+                context=self.verify_context,
+                timeout=30,
+            )
+            try:
+                connection.request("POST", path, body=body, headers=headers)
+                response = connection.getresponse()
+                return response.status, response.read()
+            finally:
+                connection.close()
         key = (parsed.hostname, port, self.verify_context.check_hostname)
         with self._http_connections_lock:
             entry = self._http_connections.get(key)
@@ -194,9 +229,6 @@ class TapoCloud:
                 entry = (connection, threading.Lock())
                 self._http_connections[key] = entry
         connection, lock = entry
-        path = parsed.path or "/"
-        if parsed.query:
-            path += "?" + parsed.query
         with lock:
             try:
                 connection.request("POST", path, body=body, headers=headers)
@@ -376,7 +408,12 @@ class TapoCloud:
         }
 
     def services_sync(
-        self, base_url: str, device: dict, requests: list[dict]
+        self,
+        base_url: str,
+        device: dict,
+        requests: list[dict],
+        *,
+        fresh_connection: bool = False,
     ) -> list[dict]:
         """Send camera control methods through Tapo's current cloud gateway."""
         device_id = str(device.get("deviceId") or "")
@@ -401,7 +438,12 @@ class TapoCloud:
             + "/services-sync"
         )
         try:
-            status, raw = self._persistent_post(url, body, self._iot_headers())
+            status, raw = self._persistent_post(
+                url,
+                body,
+                self._iot_headers(),
+                reuse=not fresh_connection,
+            )
         except (http.client.HTTPException, OSError) as exc:
             raise RuntimeError(
                 f"cloud control network error: {exc}"
@@ -417,7 +459,12 @@ class TapoCloud:
                 + "/services-sync"
             )
             try:
-                status, raw = self._persistent_post(url, body, self._iot_headers())
+                status, raw = self._persistent_post(
+                    url,
+                    body,
+                    self._iot_headers(),
+                    reuse=not fresh_connection,
+                )
             except (http.client.HTTPException, OSError) as exc:
                 raise RuntimeError(
                     f"cloud control network error: {exc}"
@@ -462,7 +509,9 @@ class TapoCloud:
             )
         return response
 
-    def get_privacy_mode(self, base_url: str, device: dict) -> bool:
+    def get_privacy_mode(
+        self, base_url: str, device: dict, *, fresh_connection: bool = False
+    ) -> bool:
         responses = self.services_sync(
             base_url,
             device,
@@ -472,6 +521,7 @@ class TapoCloud:
                     "params": {"lens_mask": {"name": ["lens_mask_info"]}},
                 }
             ],
+            fresh_connection=fresh_connection,
         )
         response = self._privacy_response(responses, "getLensMaskConfig")
         result = response.get("result") or {}
@@ -500,11 +550,32 @@ class TapoCloud:
                     },
                 }
             ],
+            fresh_connection=True,
         )
         self._privacy_response(responses, "setLensMaskConfig")
-        # Read back the state so the UI never reports success based only on an
-        # acknowledgement from the cloud gateway.
-        return self.get_privacy_mode(base_url, device)
+        # The camera applies the lens-mask command asynchronously. Poll for
+        # the requested state instead of reading once immediately, which can
+        # return the previous state and leave the UI with the wrong action.
+        last_state: bool | None = None
+        last_error: RuntimeError | OSError | None = None
+        for delay in (0.0, 0.4, 0.8, 1.2, 1.6):
+            if delay:
+                time.sleep(delay)
+            try:
+                last_state = self.get_privacy_mode(
+                    base_url, device, fresh_connection=True
+                )
+                last_error = None
+            except (RuntimeError, OSError) as exc:
+                last_error = exc
+                continue
+            if last_state == enabled:
+                return last_state
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(
+            f"privacy state did not reach {'enabled' if enabled else 'disabled'}"
+        )
 
     def ptz_supported(self, base_url: str, device: dict) -> bool:
         """Return whether the camera advertises the pan/tilt component."""
@@ -950,11 +1021,6 @@ class TapoCloud:
 def main() -> int:
     parser = argparse.ArgumentParser(description=f"{PRODUCT_NAME}: test cloud Tapo")
     parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="disable TLS verification; use only when the system reports a certificate error",
-    )
-    parser.add_argument(
         "--relay-test",
         action="store_true",
         help="also test legacy relay negotiation for the first camera",
@@ -981,7 +1047,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    client = TapoCloud(insecure=args.insecure)
+    client = TapoCloud()
     base_url = ""
     devices = None
 

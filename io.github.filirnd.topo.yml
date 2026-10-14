@@ -1,0 +1,31 @@
+id: io.github.filirnd.topo
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: topo
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --device=dri
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+
+modules:
+  - name: topo
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 flatpak/topo /app/bin/topo
+      - install -Dm644 tapo_cloud_app.py /app/share/topo/tapo_cloud_app.py
+      - install -Dm644 tapo_cloud_probe.py /app/share/topo/tapo_cloud_probe.py
+      - install -Dm644 tapo_desktop.py /app/share/topo/tapo_desktop.py
+      - cp -a cloud_web /app/share/topo/
+      - cp -a certs /app/share/topo/
+      - install -Dm644 data/io.github.filirnd.topo.png /app/share/icons/hicolor/512x512/apps/io.github.filirnd.topo.png
+      - install -Dm644 data/io.github.filirnd.topo.desktop /app/share/applications/io.github.filirnd.topo.desktop
+      - install -Dm644 data/io.github.filirnd.topo.metainfo.xml /app/share/metainfo/io.github.filirnd.topo.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/io.github.filirnd.topo/LICENSE
+    sources:
+      - type: dir
+        path: .

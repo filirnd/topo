@@ -7,4 +7,4 @@ Icon=@APP_DIR@/tapo-cloud-viewer.png
 Terminal=false
 Categories=AudioVideo;Video;Network;
 StartupNotify=true
-StartupWMClass=it.topo.TapoCloudView
+StartupWMClass=io.github.filirnd.topo

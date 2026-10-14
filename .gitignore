@@ -10,5 +10,14 @@ session.json
 credentials.json
 *credentials*.json
 *.pem
+!certs/tapo-cloud-roots.pem
 *.key
 *.log
+*.asc
+*.gpg
+.flatpak-builder/
+.flatpak-build-*/
+.flatpak-repo-*/
+flatpak-build/
+flatpak-repo/
+*.flatpak

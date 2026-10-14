@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
+import uuid
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -24,12 +25,11 @@ if not ICON_PATH.exists():
 
 
 class TapoDesktop(Gtk.Application):
-    def __init__(self, *, insecure: bool, port: int, fresh_login: bool):
+    def __init__(self, *, port: int, fresh_login: bool):
         super().__init__(
-            application_id="it.topo.TapoCloudView",
+            application_id="io.github.filirnd.topo",
             flags=0,
         )
-        self.insecure = insecure
         self.requested_port = port
         self.fresh_login = fresh_login
         self.context: CloudAppContext | None = None
@@ -42,7 +42,7 @@ class TapoDesktop(Gtk.Application):
             self.window.present()
             return
         try:
-            self.context = CloudAppContext(self.insecure, self.fresh_login)
+            self.context = CloudAppContext(self.fresh_login)
             handler_class = type("DesktopAppHandler", (Handler,), {"context": self.context})
             self.server = ThreadingHTTPServer(("127.0.0.1", self.requested_port), handler_class)
             port = self.server.server_address[1]
@@ -67,7 +67,9 @@ class TapoDesktop(Gtk.Application):
         webview = WebKit2.WebView()
         settings = webview.get_settings()
         settings.set_property("enable-developer-extras", False)
-        webview.load_uri(f"http://127.0.0.1:{port}/")
+        # The UI is served locally, but WebKit may otherwise reuse an older
+        # cached index.html after an application update.
+        webview.load_uri(f"http://127.0.0.1:{port}/?ui={uuid.uuid4().hex}")
         self.window.add(webview)
         self.window.show_all()
 
@@ -91,18 +93,12 @@ def main() -> int:
         help="local HTTP port; 0 selects a free port automatically",
     )
     parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="disable TLS verification; only needed for the known certificate issue",
-    )
-    parser.add_argument(
         "--fresh-login",
         action="store_true",
         help="force a new Tapo login and MFA flow",
     )
     args = parser.parse_args()
     application = TapoDesktop(
-        insecure=args.insecure,
         port=args.port,
         fresh_login=args.fresh_login,
     )

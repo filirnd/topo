@@ -53,7 +53,9 @@ jobs:
         run: |
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --user --disable-rofiles-fuse --force-clean \
-            --default-branch=stable --repo=repo --gpg-sign="$GPG_FINGERPRINT" \
+            --default-branch=stable --repo=repo \
+            --collection-id=io.github.filirnd.topo \
+            --gpg-sign="$GPG_FINGERPRINT" \
             build io.github.filirnd.topo.yml
           flatpak build-update-repo --collection-id=io.github.filirnd.topo \
             --gpg-sign="$GPG_FINGERPRINT" \

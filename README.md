@@ -136,6 +136,20 @@ installation link will be:
 https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref
 ```
 
+Install directly from the published repository with Flatpak:
+
+```bash
+flatpak install --user https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref
+```
+
+The `.flatpakref` can also be downloaded and opened with GNOME Software when
+Flatpak support is enabled. The repository is added automatically and future
+application updates can be installed with:
+
+```bash
+flatpak update --user
+```
+
 The Flatpak package is cloud-only and needs network access, but it does not
 need RTSP, Tailscale, a Raspberry Pi, or access to the home LAN.
 

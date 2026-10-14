@@ -2,17 +2,6 @@
 
 All notable changes to Topo are documented here.
 
-## [Unreleased]
-
-- Fixed consecutive privacy mode enable/disable operations getting stuck after
-  the first state change.
-- Recreated the affected camera's cloud media relay after privacy changes so
-  video resumes reliably when privacy is disabled again.
-- Refreshed only the camera whose privacy state changed instead of rebuilding
-  every camera card.
-- More camera models and additional Tapo features will be evaluated with
-  community testing.
-
 ## [0.1.2] - 2026-10-14
 
 ### Fixed
@@ -40,6 +29,15 @@ All notable changes to Topo are documented here.
 - Linux desktop launcher and Topo application icon.
 - Dependency-aware Linux installer for Ubuntu/Debian and Fedora/RHEL.
 - Self-hosted Flatpak repository publication through GitHub Pages.
+
+### Fixed
+
+- Fixed consecutive privacy mode enable/disable operations getting stuck after
+  the first state change.
+- Recreated the affected camera's cloud media relay after privacy changes so
+  video resumes reliably when privacy is disabled again.
+- Refreshed only the camera whose privacy state changed instead of rebuilding
+  every camera card.
 
 ### Notes
 

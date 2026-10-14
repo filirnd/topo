@@ -57,6 +57,7 @@ jobs:
             build io.github.filirnd.topo.yml
           flatpak build-update-repo --collection-id=io.github.filirnd.topo \
             --gpg-sign="$GPG_FINGERPRINT" \
+            --update-appstream \
             --generate-static-deltas repo
           mkdir -p pages
           cp -a repo/. pages/
@@ -71,6 +72,7 @@ jobs:
           RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
           IsRuntime=false
           SuggestRemoteName=topo
+          CollectionID=io.github.filirnd.topo
           GPGKey=$public_key
           Homepage=https://github.com/filirnd/topo
           Icon=https://raw.githubusercontent.com/filirnd/topo/main/linux/tapo-cloud-viewer.png

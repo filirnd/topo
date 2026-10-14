@@ -74,6 +74,9 @@
     .card:fullscreen .movement-panel, .card:-webkit-full-screen .movement-panel, .card.is-fullscreen .movement-panel { position: static; width: 100%; min-height: 0; margin-top: 10px; box-shadow: none; }
     .card:fullscreen.commands-open .card-body, .card:-webkit-full-screen.commands-open .card-body, .card.is-fullscreen.commands-open .card-body { transform: translateY(0); }
     .card:fullscreen .commands-handle, .card:-webkit-full-screen .commands-handle, .card.is-fullscreen .commands-handle { display: block; }
+    /* Keep the fullscreen controls handle anchored to the viewport center.
+       The drawer scrollbar/content must not change its containing block. */
+    .card:fullscreen .commands-handle, .card:-webkit-full-screen .commands-handle, .card.is-fullscreen .commands-handle { position: fixed; left: 50%; right: auto; bottom: 18px; width: max-content; }
     .card:fullscreen .badge-row, .card:-webkit-full-screen .badge-row, .card.is-fullscreen .badge-row { top: 18px; left: 20px; right: 20px; }
     .login-wrap { min-height: calc(100vh - 78px); display: grid; place-items: center; padding: 28px 16px; } .login-card { width: min(440px, 100%); padding: clamp(22px, 5vw, 34px); border: 1px solid var(--border); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); }
     .login-brand { display: block; width: 92px; height: 92px; margin: 0 auto 18px; border-radius: 25px; object-fit: cover; } h2 { margin: 0; font-size: 1.25rem; }

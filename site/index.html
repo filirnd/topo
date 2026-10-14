@@ -38,7 +38,7 @@
     nav a { text-decoration: none; }
 
     main { padding: 34px 0 76px; }
-    .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 42px; align-items: center; margin-top: 0; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 42px; align-items: start; margin-top: 0; }
     .eyebrow { margin: 0 0 12px; color: var(--ink-soft); font-size: .78rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
     h1, h2, h3 { line-height: 1.15; letter-spacing: -.035em; }
     h1 { max-width: 720px; margin: 0; font-size: clamp(2.6rem, 6vw, 5rem); }
@@ -57,6 +57,11 @@
     .install-card .label { color: var(--ink-soft); font-size: .8rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
     .install-card h2 { margin-top: 8px; }
     .install-card p { color: var(--ink-soft); font-size: .94rem; }
+    .install-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 18px 0 22px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper-strong); }
+    .install-tab { min-height: 38px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-soft); font: inherit; font-size: .88rem; font-weight: 800; cursor: pointer; }
+    .install-tab[aria-selected="true"] { background: var(--ink); color: var(--paper-strong); }
+    .install-panel[hidden] { display: none; }
+    .install-panel h3 { margin-top: 0; }
     .install-steps { margin: -4px 0 20px; padding-left: 20px; color: var(--ink-soft); font-size: .9rem; }
     .install-steps li + li { margin-top: 6px; }
     code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
@@ -102,7 +107,7 @@
       </a>
       <nav aria-label="Primary navigation">
         <a href="#features">Features</a>
-        <a href="#windows">Windows</a>
+        <a href="#install">Install</a>
         <a href="#changelog">Changelog</a>
         <a href="https://github.com/filirnd/topo">GitHub</a>
       </nav>
@@ -123,47 +128,42 @@
         <div class="notice"><strong>Experimental software.</strong> Topo is an independent third-party project and uses undocumented Tapo cloud endpoints. It is not affiliated with or endorsed by TP-Link or Tapo.</div>
       </div>
 
-      <aside class="install-card" aria-labelledby="install-title">
+      <aside class="install-card" id="install" aria-labelledby="install-title">
         <span class="label">Quick install</span>
-        <h2 id="install-title">Install on Linux</h2>
-        <p>Make sure Flatpak is installed, then run this command. It adds the Topo repository and keeps the app updateable.</p>
-        <pre><code>flatpak install --user https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref</code></pre>
-        <p>Launch it from your desktop menu or with:</p>
-        <pre><code>flatpak run io.github.filirnd.topo</code></pre>
-        <p><strong>Prefer a graphical installation?</strong></p>
-        <ol class="install-steps">
-          <li>Click <strong>Download .flatpakref</strong> below.</li>
-          <li>Open the downloaded file with GNOME Software.</li>
-          <li>Confirm the installation. The Topo repository is added automatically, so future updates appear through Flatpak.</li>
-        </ol>
-        <a class="button" href="io.github.filirnd.topo.flatpakref" download>Download .flatpakref</a>
+        <h2 id="install-title">Choose your platform</h2>
+        <div class="install-tabs" role="tablist" aria-label="Installation platform">
+          <button class="install-tab" id="linux-tab" type="button" role="tab" aria-selected="true" aria-controls="linux-panel">Linux</button>
+          <button class="install-tab" id="windows-tab" type="button" role="tab" aria-selected="false" aria-controls="windows-panel">Windows</button>
+        </div>
+
+        <div class="install-panel" id="linux-panel" role="tabpanel" aria-labelledby="linux-tab">
+          <h3>Install with Flatpak</h3>
+          <p>Make sure Flatpak is installed, then run this command. It adds the Topo repository and keeps the app updateable.</p>
+          <pre><code>flatpak install --user https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref</code></pre>
+          <p>Launch it from your desktop menu or with:</p>
+          <pre><code>flatpak run io.github.filirnd.topo</code></pre>
+          <p><strong>Prefer a graphical installation?</strong></p>
+          <ol class="install-steps">
+            <li>Click <strong>Download .flatpakref</strong> below.</li>
+            <li>Open the downloaded file with GNOME Software.</li>
+            <li>Confirm the installation. The Topo repository is added automatically, so future updates appear through Flatpak.</li>
+          </ol>
+          <a class="button" href="io.github.filirnd.topo.flatpakref" download>Download .flatpakref</a>
+          <p style="margin-top: 18px;">Want to build the Windows installer locally from Linux? See the <a href="https://github.com/filirnd/topo/blob/main/windows/LOCAL_BUILD.md">local build guide</a>.</p>
+        </div>
+
+        <div class="install-panel" id="windows-panel" role="tabpanel" aria-labelledby="windows-tab" hidden>
+          <h3>Install the Windows app</h3>
+          <p>Download the latest x64 installer from GitHub Releases and run the `.exe`. Python and Node.js are not required.</p>
+          <ol class="install-steps">
+            <li>Open the <a href="https://github.com/filirnd/topo/releases">Topo Releases</a> page.</li>
+            <li>Download the Windows `.exe` installer from the latest release.</li>
+            <li>Run it and launch Topo from the desktop or Start Menu.</li>
+          </ol>
+          <div class="notice"><strong>Windows SmartScreen notice.</strong> Topo is not code-signed by a Windows-trusted publisher yet. Windows may show an unknown-publisher warning; verify the official source, then choose <strong>More info → Run anyway</strong> if you trust it.</div>
+          <p style="margin-top: 18px;">Want to build it yourself? See the <a href="https://github.com/filirnd/topo/blob/main/windows/LOCAL_BUILD.md">local Windows build guide</a>.</p>
+        </div>
       </aside>
-    </section>
-
-    <section id="windows" class="split" aria-labelledby="windows-title">
-      <article class="panel">
-        <p class="eyebrow">Windows release</p>
-        <h2 id="windows-title">Install the desktop app</h2>
-        <p>Download the latest x64 installer from GitHub Releases and run the `.exe`. The installer includes the Topo backend and FFmpeg, so Python and Node.js are not required.</p>
-        <ol class="install-steps">
-          <li>Open the <a href="https://github.com/filirnd/topo/releases">Topo Releases</a> page.</li>
-          <li>Download the Windows `.exe` installer from the latest release.</li>
-          <li>Run it and launch Topo from the desktop or Start Menu.</li>
-        </ol>
-        <div class="notice"><strong>Windows SmartScreen notice.</strong> Topo is not code-signed by a Windows-trusted publisher yet. Windows may show an unknown-publisher warning; verify that the installer came from the official GitHub repository, then choose <strong>More info → Run anyway</strong> if you trust the source.</div>
-      </article>
-
-      <article class="panel">
-        <p class="eyebrow">Build it yourself</p>
-        <h2>Prefer a locally built installer?</h2>
-        <p>Inspect the source and build the installer locally instead of using the prebuilt binary.</p>
-        <pre><code># Linux with Docker
-./windows/build-local.sh
-
-# Windows PowerShell
-powershell -ExecutionPolicy Bypass -File .\windows\build-local.ps1</code></pre>
-        <p>The installer is written to <code>windows/out/</code>. See the <a href="https://github.com/filirnd/topo/blob/main/windows/LOCAL_BUILD.md">local build guide</a> for prerequisites.</p>
-      </article>
     </section>
 
     <section id="features" aria-labelledby="features-title">
@@ -241,6 +241,15 @@ powershell -ExecutionPolicy Bypass -File .\windows\build-local.ps1</code></pre>
     }
     window.addEventListener('scroll', updateBackToTop, { passive: true });
     updateBackToTop();
+
+    const installTabs = document.querySelectorAll('.install-tab');
+    const installPanels = document.querySelectorAll('.install-panel');
+    installTabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        installTabs.forEach((item) => item.setAttribute('aria-selected', String(item === tab)));
+        installPanels.forEach((panel) => { panel.hidden = panel.id !== tab.getAttribute('aria-controls'); });
+      });
+    });
   </script>
 </body>
 </html>

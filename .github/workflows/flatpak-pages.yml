@@ -24,6 +24,12 @@ jobs:
         shell: bash
         run: |
           test -n "$GPG_PRIVATE_KEY"
+          gpg_home="${GNUPGHOME:-}"
+          if [ -z "$gpg_home" ]; then
+            gpg_home="$(gpgconf --list-dirs homedir)"
+          fi
+          test -n "$gpg_home"
+          export GNUPGHOME="$gpg_home"
           if [ -n "$GPG_PASSPHRASE" ]; then
             mkdir -p "$GNUPGHOME"
             printf 'allow-preset-passphrase\n' >> "$GNUPGHOME/gpg-agent.conf"

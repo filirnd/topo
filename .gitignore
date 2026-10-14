@@ -21,3 +21,6 @@ credentials.json
 flatpak-build/
 flatpak-repo/
 *.flatpak
+windows/node_modules/
+windows/dist/
+windows/out/

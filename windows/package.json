@@ -1,0 +1,57 @@
+{
+  "name": "topo-windows",
+  "version": "0.1.2",
+  "description": "Topo - desktop app for Tapo camera",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "io.github.filirnd.topo",
+    "productName": "Topo - desktop app for Tapo camera",
+    "directories": {
+      "output": "out"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/tapo-backend.exe",
+        "to": "backend/tapo-backend.exe"
+      },
+      {
+        "from": "dist/ffmpeg.exe",
+        "to": "backend/ffmpeg.exe"
+      },
+      {
+        "from": "../data/io.github.filirnd.topo.png",
+        "to": "assets/topo.png"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "../data/io.github.filirnd.topo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Topo - desktop app for Tapo camera"
+    }
+  }
+}

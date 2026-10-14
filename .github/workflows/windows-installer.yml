@@ -1,0 +1,62 @@
+name: Windows installer
+
+on:
+  push:
+    branches: [feature/windows-installer]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Build Windows x64 installer
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build cloud backend
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          pyinstaller --clean --noconfirm --onefile --name tapo-backend `
+            --add-data "cloud_web;cloud_web" `
+            --add-data "certs;certs" `
+            --add-data "data/io.github.filirnd.topo.png;." `
+            tapo_cloud_app.py
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+          Invoke-WebRequest `
+            -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' `
+            -OutFile $archive
+          $extract = Join-Path $env:RUNNER_TEMP 'ffmpeg'
+          Expand-Archive -Path $archive -DestinationPath $extract -Force
+          $binary = Get-ChildItem -Path $extract -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+          if (-not $binary) { throw 'FFmpeg executable was not found in the downloaded archive.' }
+          New-Item -ItemType Directory -Force -Path windows/dist | Out-Null
+          Copy-Item $binary.FullName windows/dist/ffmpeg.exe
+          Copy-Item dist/tapo-backend.exe windows/dist/tapo-backend.exe
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build installer
+        working-directory: windows
+        shell: pwsh
+        run: |
+          npm install --no-audit --no-fund
+          npm run dist
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: topo-windows-x64
+          path: windows/out/*

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import queue
 import socket
 import ssl
@@ -37,9 +38,11 @@ from tapo_cloud_probe import (
 )
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 WEB_ROOT = ROOT / "cloud_web"
 ICON_PATH = ROOT / "tapo-cloud-viewer.png"
+if not ICON_PATH.exists():
+    ICON_PATH = ROOT / "io.github.filirnd.topo.png"
 PRODUCT_NAME = "Topo - desktop app for Tapo camera"
 
 
@@ -368,7 +371,7 @@ class CloudMediaWorker:
 
     @property
     def client_ffmpeg(self) -> str:
-        return getattr(self.client, "ffmpeg", "ffmpeg")
+        return os.environ.get("TOPO_FFMPEG") or getattr(self.client, "ffmpeg", "ffmpeg")
 
 
 class CloudAppState:
@@ -877,8 +880,8 @@ def main() -> int:
 
     handler_class = type("CloudAppHandler", (Handler,), {"context": context})
     server = ThreadingHTTPServer((args.host, args.port), handler_class)
-    print(f"{PRODUCT_NAME} available at http://{args.host}:{args.port}")
-    print("Press Ctrl+C to stop the app.")
+    print(f"{PRODUCT_NAME} available at http://{args.host}:{args.port}", flush=True)
+    print("Press Ctrl+C to stop the app.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

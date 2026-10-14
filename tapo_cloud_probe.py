@@ -42,7 +42,8 @@ APP_VERSION = "3.21.114"
 PRODUCT_NAME = "Topo - desktop app for Tapo camera"
 LOGIN_URL = "https://n-wap-gw.tplinkcloud.com"
 CIPC_URL = "https://cipc.api.cloud"
-ROOT = Path(__file__).resolve().parent
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+ROOT = RESOURCE_ROOT
 TP_LINK_ROOTS_PATH = ROOT / "certs" / "tapo-cloud-roots.pem"
 
 # App-level credentials used by the Tapo Android application.  These identify
@@ -59,6 +60,10 @@ DEVICE_ERROR_MESSAGES = {
 
 
 def session_path() -> Path:
+    if os.name == "nt":
+        state_home = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        root = Path(state_home) if state_home else Path.home() / "AppData" / "Local"
+        return root / "Topo" / "state" / "session.json"
     state_home = os.environ.get("XDG_STATE_HOME")
     root = Path(state_home) if state_home else Path.home() / ".local" / "state"
     return root / "tapo-cloud-probe" / "session.json"

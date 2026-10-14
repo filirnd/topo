@@ -37,8 +37,8 @@
     nav { display: flex; align-items: center; gap: 20px; font-size: .92rem; }
     nav a { text-decoration: none; }
 
-    main { padding: 58px 0 76px; }
-    .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 42px; align-items: center; }
+    main { padding: 34px 0 76px; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 42px; align-items: center; margin-top: 0; }
     .eyebrow { margin: 0 0 12px; color: var(--ink-soft); font-size: .78rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
     h1, h2, h3 { line-height: 1.15; letter-spacing: -.035em; }
     h1 { max-width: 720px; margin: 0; font-size: clamp(2.6rem, 6vw, 5rem); }
@@ -81,6 +81,8 @@
     .release ul { margin-top: 8px; }
 
     .screenshot { display: block; width: 100%; margin-top: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 14px 30px var(--shadow); }
+    .back-to-top { position: fixed; right: 22px; bottom: 22px; z-index: 10; display: grid; width: 44px; height: 44px; place-items: center; border: 1px solid var(--ink); border-radius: 50%; background: var(--ink); color: var(--paper-strong); text-decoration: none; font-size: 1.25rem; font-weight: 900; box-shadow: 0 8px 18px var(--shadow); }
+    .back-to-top:hover { background: var(--accent-strong); color: var(--ink); }
     footer { padding: 26px 0 34px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: .88rem; }
     .footer-row { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 
@@ -88,7 +90,7 @@
     @media (max-width: 560px) { .shell { width: min(100% - 28px, 1120px); } .nav { min-height: 68px; } nav { gap: 10px; font-size: .82rem; } nav a:nth-child(2) { display: none; } h1 { font-size: 2.65rem; } .feature-grid { grid-template-columns: 1fr; } .install-card, .feature, .panel { padding: 18px; } }
   </style>
 </head>
-<body>
+<body id="top">
   <header>
     <div class="shell nav">
       <a class="brand" href=".">
@@ -107,7 +109,7 @@
     <section class="hero" aria-labelledby="page-title">
       <div>
         <p class="eyebrow">Linux · Flatpak · Tapo Cloud</p>
-        <h1 id="page-title">See your cameras without opening a browser.</h1>
+        <h1 id="page-title">See your camera directly from your desktop.</h1>
         <p class="hero-copy">Topo is a standalone Linux desktop app for viewing and controlling multiple Tapo cameras from one clean window. It uses the <strong>Tapo cloud relay</strong>, so there is no RTSP setup, port forwarding, VPN, or direct access to your home network.</p>
         <div class="actions">
           <a class="button" href="io.github.filirnd.topo.flatpakref">Install with Flatpak</a>
@@ -191,5 +193,6 @@
       <span><a href="https://github.com/filirnd/topo/issues">Report an issue</a> · <a href="https://github.com/filirnd/topo/blob/main/README.md">Documentation</a></span>
     </div>
   </footer>
+  <a class="back-to-top" href="#top" aria-label="Back to top" title="Back to top">↑</a>
 </body>
 </html>

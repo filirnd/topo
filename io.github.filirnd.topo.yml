@@ -22,6 +22,7 @@ modules:
       - install -Dm644 tapo_desktop.py /app/share/topo/tapo_desktop.py
       - cp -a cloud_web /app/share/topo/
       - cp -a certs /app/share/topo/
+      - install -Dm644 linux/tapo-cloud-viewer.png /app/share/topo/tapo-cloud-viewer.png
       - install -Dm644 data/io.github.filirnd.topo.png /app/share/icons/hicolor/512x512/apps/io.github.filirnd.topo.png
       - install -Dm644 data/io.github.filirnd.topo.desktop /app/share/applications/io.github.filirnd.topo.desktop
       - install -Dm644 data/io.github.filirnd.topo.metainfo.xml /app/share/metainfo/io.github.filirnd.topo.metainfo.xml

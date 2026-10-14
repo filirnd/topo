@@ -40,6 +40,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.2" date="2026-10-14">
+      <description>
+        <p>Fixed the fullscreen Controls button moving when the command drawer opens.</p>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-10-14">
       <description>
         <p>Added an Info button that opens the Topo project website.</p>

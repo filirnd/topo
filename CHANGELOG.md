@@ -13,6 +13,12 @@ All notable changes to Topo are documented here.
 - More camera models and additional Tapo features will be evaluated with
   community testing.
 
+## [0.1.2] - 2026-10-14
+
+### Fixed
+
+- Kept the fullscreen Controls button centered when the command drawer opens.
+
 ## [0.1.1] - 2026-10-14
 
 ### Added

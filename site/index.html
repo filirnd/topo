@@ -3,12 +3,193 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Topo Flatpak repository</title>
+  <meta name="description" content="Topo is a standalone Linux desktop app for viewing and controlling Tapo cameras through the Tapo cloud.">
+  <meta name="theme-color" content="#3f3834">
+  <link rel="icon" href="https://raw.githubusercontent.com/filirnd/topo/main/linux/tapo-cloud-viewer.png">
+  <title>Topo - desktop app for Tapo camera</title>
+  <style>
+    :root {
+      --ink: #3f3834;
+      --ink-soft: #665d57;
+      --paper: #edede9;
+      --paper-strong: #f5ebe0;
+      --surface-alt: #e3d5ca;
+      --surface: #ffffff;
+      --line: #d6ccc2;
+      --accent: #d5bdaf;
+      --accent-strong: #b99886;
+      --shadow: rgba(63, 56, 52, .12);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; }
+    a { color: var(--ink); font-weight: 700; }
+    a:hover { color: var(--accent-strong); }
+    .shell { width: min(1120px, calc(100% - 40px)); margin: 0 auto; }
+
+    header { border-bottom: 1px solid var(--line); background: var(--paper-strong); }
+    .nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 76px; }
+    .brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; }
+    .brand img { width: 48px; height: 48px; object-fit: contain; border-radius: 12px; }
+    .brand strong { display: block; font-size: 1.05rem; letter-spacing: -.02em; }
+    .brand span { display: block; color: var(--ink-soft); font-size: .82rem; }
+    nav { display: flex; align-items: center; gap: 20px; font-size: .92rem; }
+    nav a { text-decoration: none; }
+
+    main { padding: 58px 0 76px; }
+    .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 42px; align-items: center; }
+    .eyebrow { margin: 0 0 12px; color: var(--ink-soft); font-size: .78rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    h1, h2, h3 { line-height: 1.15; letter-spacing: -.035em; }
+    h1 { max-width: 720px; margin: 0; font-size: clamp(2.6rem, 6vw, 5rem); }
+    h2 { margin: 0 0 10px; font-size: 1.7rem; }
+    h3 { margin: 0 0 8px; font-size: 1.05rem; }
+    p { margin: 0 0 16px; }
+    .hero-copy { max-width: 700px; color: var(--ink-soft); font-size: 1.12rem; }
+    .hero-copy strong { color: var(--ink); }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+    .button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border: 1px solid var(--ink); border-radius: 10px; background: var(--ink); color: var(--paper-strong); text-decoration: none; font-size: .92rem; font-weight: 800; }
+    .button:hover { background: var(--accent-strong); color: var(--ink); }
+    .button.secondary { border-color: var(--line); background: var(--surface); color: var(--ink); }
+
+    .install-card { padding: 26px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 18px 42px var(--shadow); }
+    .install-card .label { color: var(--ink-soft); font-size: .8rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+    .install-card h2 { margin-top: 8px; }
+    .install-card p { color: var(--ink-soft); font-size: .94rem; }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    pre { overflow-x: auto; margin: 16px 0 20px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper-strong); color: var(--ink); font-size: .8rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .notice { margin-top: 30px; padding: 14px 16px; border-left: 4px solid var(--accent-strong); background: var(--paper-strong); color: var(--ink-soft); font-size: .92rem; }
+
+    section { margin-top: 76px; }
+    .section-heading { max-width: 670px; margin-bottom: 24px; }
+    .section-heading p { color: var(--ink-soft); }
+    .feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .feature, .panel { padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+    .feature:nth-child(2n) { background: var(--surface-alt); }
+    .feature p, .panel p, .panel li { color: var(--ink-soft); font-size: .93rem; }
+    .feature-icon { display: grid; width: 34px; height: 34px; margin-bottom: 16px; place-items: center; border-radius: 9px; background: var(--accent); color: var(--ink); font-weight: 900; }
+
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, .8fr); gap: 16px; }
+    .panel ul { margin: 12px 0 0; padding-left: 20px; }
+    .panel li + li { margin-top: 7px; }
+    .release { padding: 14px 0; border-top: 1px solid var(--line); }
+    .release:first-of-type { border-top: 0; padding-top: 0; }
+    .release-title { display: flex; justify-content: space-between; gap: 12px; }
+    .release-title strong { font-size: 1rem; }
+    .release-title time, .release-title span { color: var(--ink-soft); font-size: .82rem; white-space: nowrap; }
+    .release ul { margin-top: 8px; }
+
+    .screenshot { display: block; width: 100%; margin-top: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 0 14px 30px var(--shadow); }
+    footer { padding: 26px 0 34px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: .88rem; }
+    .footer-row { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+
+    @media (max-width: 820px) { .hero, .split { grid-template-columns: 1fr; } .feature-grid { grid-template-columns: 1fr 1fr; } main { padding-top: 38px; } }
+    @media (max-width: 560px) { .shell { width: min(100% - 28px, 1120px); } .nav { min-height: 68px; } nav { gap: 10px; font-size: .82rem; } nav a:nth-child(2) { display: none; } h1 { font-size: 2.65rem; } .feature-grid { grid-template-columns: 1fr; } .install-card, .feature, .panel { padding: 18px; } }
+  </style>
 </head>
 <body>
-  <h1>Topo - desktop app for Tapo camera</h1>
-  <p>Install Topo on Linux with Flatpak:</p>
-  <p><a href="io.github.filirnd.topo.flatpakref">Install Topo</a></p>
-  <p>Topo is an independent third-party application and is not affiliated with TP-Link or Tapo.</p>
+  <header>
+    <div class="shell nav">
+      <a class="brand" href=".">
+        <img src="https://raw.githubusercontent.com/filirnd/topo/main/linux/tapo-cloud-viewer.png" alt="Topo logo">
+        <span><strong>Topo</strong><span>Desktop app for Tapo camera</span></span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#changelog">Changelog</a>
+        <a href="https://github.com/filirnd/topo">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">Linux · Flatpak · Tapo Cloud</p>
+        <h1 id="page-title">See your cameras without opening a browser.</h1>
+        <p class="hero-copy">Topo is a standalone Linux desktop app for viewing and controlling multiple Tapo cameras from one clean window. It uses the <strong>Tapo cloud relay</strong>, so there is no RTSP setup, port forwarding, VPN, or direct access to your home network.</p>
+        <div class="actions">
+          <a class="button" href="io.github.filirnd.topo.flatpakref">Install with Flatpak</a>
+          <a class="button secondary" href="https://github.com/filirnd/topo">View source on GitHub</a>
+        </div>
+        <div class="notice"><strong>Experimental software.</strong> Topo is an independent third-party project and uses undocumented Tapo cloud endpoints. It is not affiliated with or endorsed by TP-Link or Tapo.</div>
+      </div>
+
+      <aside class="install-card" aria-labelledby="install-title">
+        <span class="label">Quick install</span>
+        <h2 id="install-title">Install on Linux</h2>
+        <p>Make sure Flatpak is installed, then run this command. It adds the Topo repository and keeps the app updateable.</p>
+        <pre><code>flatpak install --user https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref</code></pre>
+        <p>Launch it from your desktop menu or with:</p>
+        <pre><code>flatpak run io.github.filirnd.topo</code></pre>
+        <a class="button" href="io.github.filirnd.topo.flatpakref">Download .flatpakref</a>
+      </aside>
+    </section>
+
+    <section id="features" aria-labelledby="features-title">
+      <div class="section-heading">
+        <p class="eyebrow">What you get</p>
+        <h2 id="features-title">A focused desktop view for your Tapo cameras.</h2>
+        <p>Log in with your Tapo account, complete MFA when requested, and keep your cameras together in a native Linux window.</p>
+      </div>
+      <div class="feature-grid">
+        <article class="feature"><div class="feature-icon">▦</div><h3>Multi-camera live view</h3><p>See multiple cloud camera streams in the same responsive dashboard, with per-camera loading, error, and retry states.</p></article>
+        <article class="feature"><div class="feature-icon">◉</div><h3>Privacy controls</h3><p>Enable or disable privacy mode for each camera and immediately reconnect its media relay after a state change.</p></article>
+        <article class="feature"><div class="feature-icon">↕</div><h3>Pan and tilt</h3><p>Move compatible cameras from a compact control panel with selectable movement steps.</p></article>
+        <article class="feature"><div class="feature-icon">⛶</div><h3>Fullscreen viewing</h3><p>Open any camera fullscreen with a button or double-click, while keeping controls in a separate drawer.</p></article>
+        <article class="feature"><div class="feature-icon">⌁</div><h3>MFA and sessions</h3><p>Sign in with Tapo app or email verification, reuse a saved session, and log out when you want a fresh login.</p></article>
+        <article class="feature"><div class="feature-icon">▣</div><h3>Simple distribution</h3><p>Install through this signed Flatpak repository hosted on GitHub Pages and receive updates through Flatpak.</p></article>
+      </div>
+    </section>
+
+    <section class="split" aria-label="Compatibility and changelog">
+      <article class="panel">
+        <p class="eyebrow">Compatibility</p>
+        <h2>Tested camera</h2>
+        <p><strong>Tapo C200</strong> is currently the tested model.</p>
+        <ul>
+          <li>Live cloud video: supported</li>
+          <li>Privacy mode: supported</li>
+          <li>Pan and tilt: supported</li>
+        </ul>
+        <p style="margin-top: 18px;">Have another model? <a href="https://github.com/filirnd/topo/issues">Share your results</a> and include the model and firmware version. Never include credentials, session tokens, or private footage.</p>
+      </article>
+
+      <article class="panel" id="changelog">
+        <p class="eyebrow">Project updates</p>
+        <h2>Latest changelog</h2>
+        <div class="release">
+          <div class="release-title"><strong>Unreleased</strong><span>in development</span></div>
+          <ul>
+            <li>Fixed consecutive privacy enable/disable operations without requiring a full camera refresh.</li>
+            <li>Reset the affected camera's cloud media relay after privacy changes.</li>
+            <li>Refresh only the camera whose state changed.</li>
+          </ul>
+        </div>
+        <div class="release">
+          <div class="release-title"><strong>0.1.0</strong><time datetime="2026-10-14">14 Oct 2026</time></div>
+          <p>Initial Flatpak distribution with cloud streaming, MFA, privacy, pan and tilt, fullscreen, and a Linux installer.</p>
+        </div>
+        <a href="https://github.com/filirnd/topo/blob/main/CHANGELOG.md">Read the full changelog →</a>
+      </article>
+    </section>
+
+    <section aria-labelledby="preview-title">
+      <div class="section-heading">
+        <p class="eyebrow">In the app</p>
+        <h2 id="preview-title">Your cameras, one desktop window.</h2>
+        <p>The preview below uses privacy-safe imagery and shows the compact dashboard layout.</p>
+      </div>
+      <img class="screenshot" src="https://raw.githubusercontent.com/filirnd/topo/main/docs/screen.png" alt="Topo dashboard showing two privacy-blurred camera previews">
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-row">
+      <span>Topo · MIT License · Topo Author</span>
+      <span><a href="https://github.com/filirnd/topo/issues">Report an issue</a> · <a href="https://github.com/filirnd/topo/blob/main/README.md">Documentation</a></span>
+    </div>
+  </footer>
 </body>
 </html>

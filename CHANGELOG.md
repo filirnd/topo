@@ -4,7 +4,12 @@ All notable changes to Topo are documented here.
 
 ## [Unreleased]
 
-- Improvements and fixes for the Linux desktop application.
+- Fixed consecutive privacy mode enable/disable operations getting stuck after
+  the first state change.
+- Recreated the affected camera's cloud media relay after privacy changes so
+  video resumes reliably when privacy is disabled again.
+- Refreshed only the camera whose privacy state changed instead of rebuilding
+  every camera card.
 - More camera models and additional Tapo features will be evaluated with
   community testing.
 

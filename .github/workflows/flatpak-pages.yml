@@ -105,6 +105,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          # This deployment was left in progress by the first failed Pages
+          # workflow and blocks every later deployment. The API accepts the
+          # deployment commit SHA as an identifier.
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/pages/deployments/c966d1d0c7d32a3c74938ad50f2d7e66e5d64856/cancel" \
+            || true
           while IFS= read -r deployment_sha; do
             [ -z "$deployment_sha" ] && continue
             if [ "$deployment_sha" = "$GITHUB_SHA" ]; then

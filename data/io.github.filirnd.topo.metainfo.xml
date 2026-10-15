@@ -12,7 +12,7 @@
   </developer>
   <description>
     <p>View and control multiple Tapo cameras from a standalone Linux desktop application using the Tapo cloud service.</p>
-    <p>Topo supports live video, cloud connection checks, privacy mode, pan and tilt, per-camera fullscreen, MFA login, session reuse, and logout.</p>
+    <p>Topo supports live video and audio, cloud connection checks, privacy mode, pan and tilt, per-camera fullscreen, MFA login, session reuse, logout, and full SD-card recording playback with MP4 downloads.</p>
     <p>Topo is an independent third-party application and is not affiliated with or endorsed by TP-Link or Tapo. It uses undocumented Tapo cloud endpoints and may require updates when the service changes.</p>
   </description>
   <launchable type="desktop-id">io.github.filirnd.topo.desktop</launchable>
@@ -40,6 +40,16 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.4" date="2026-10-15">
+      <description>
+        <p>Added full SD-card clip playback and MP4 downloads, native save dialogs, and a compact newest-first recording list.</p>
+      </description>
+    </release>
+    <release version="0.1.3" date="2026-10-14">
+      <description>
+        <p>Stabilized the GitHub Pages deployment and added the Windows release workflow.</p>
+      </description>
+    </release>
     <release version="0.1.2" date="2026-10-14">
       <description>
         <p>Fixed the fullscreen Controls button moving when the command drawer opens.</p>

@@ -12,20 +12,23 @@ MJPEG for the local browser. It never connects to a camera LAN address.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import mimetypes
 import os
 import queue
+import shutil
 import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from tapo_cloud_probe import (
     LOGIN_URL,
@@ -47,6 +50,71 @@ if not ICON_PATH.exists():
 PRODUCT_NAME = "Topo - desktop app for Tapo camera"
 
 
+class _MulawTsExtractor:
+    """Extract private G.711 μ-law PES payloads from a live MPEG-TS stream."""
+
+    def __init__(self) -> None:
+        self.buffer = bytearray()
+        self.audio_pids: set[int] = set()
+        self.remaining_by_pid: dict[int, int] = {}
+
+    def feed(self, data: bytes) -> bytes:
+        self.buffer.extend(data)
+        audio = bytearray()
+        while len(self.buffer) >= 188:
+            if self.buffer[0] != 0x47:
+                try:
+                    next_sync = self.buffer.index(0x47)
+                except ValueError:
+                    del self.buffer[:-187]
+                    break
+                del self.buffer[:next_sync]
+                if len(self.buffer) < 188:
+                    break
+            packet = bytes(self.buffer[:188])
+            del self.buffer[:188]
+            extracted = self._packet(packet)
+            if extracted:
+                audio.extend(extracted)
+        return bytes(audio)
+
+    def _packet(self, packet: bytes) -> bytes:
+        if packet[0] != 0x47:
+            return b""
+        pid = ((packet[1] & 0x1F) << 8) | packet[2]
+        adaptation = (packet[3] >> 4) & 0x3
+        if not adaptation & 1:
+            return b""
+        payload_offset = 4
+        if adaptation & 2:
+            payload_offset += 1 + packet[4]
+        if payload_offset >= 188:
+            return b""
+        payload = packet[payload_offset:]
+        if packet[1] & 0x40:
+            self.remaining_by_pid[pid] = 0
+            if len(payload) < 14 or payload[:3] != b"\x00\x00\x01":
+                return b""
+            stream_id = payload[3]
+            if not 0xC0 <= stream_id <= 0xDF:
+                return b""
+            self.audio_pids.add(pid)
+            packet_length = int.from_bytes(payload[4:6], "big")
+            header_length = 9 + payload[8]
+            if packet_length <= 0 or header_length > 6 + packet_length:
+                return b""
+            self.remaining_by_pid[pid] = 6 + packet_length - header_length
+            payload = payload[header_length:]
+        if pid not in self.audio_pids:
+            return b""
+        remaining = self.remaining_by_pid.get(pid, 0)
+        if remaining <= 0:
+            return b""
+        take = min(len(payload), remaining)
+        self.remaining_by_pid[pid] = remaining - take
+        return payload[:take]
+
+
 class CloudMediaWorker:
     """Keep one cloud relay and one FFmpeg decoder per camera."""
 
@@ -55,6 +123,7 @@ class CloudMediaWorker:
         self.base_url = base_url
         self.device = device
         self.subscribers: set[queue.Queue[bytes]] = set()
+        self.audio_subscribers: set[queue.Queue[bytes]] = set()
         self.lock = threading.Lock()
         self.wake = threading.Event()
         self.stop = threading.Event()
@@ -74,6 +143,17 @@ class CloudMediaWorker:
     def unsubscribe(self, subscriber: queue.Queue[bytes]) -> None:
         with self.lock:
             self.subscribers.discard(subscriber)
+
+    def subscribe_audio(self) -> queue.Queue[bytes]:
+        subscriber: queue.Queue[bytes] = queue.Queue(maxsize=32)
+        with self.lock:
+            self.audio_subscribers.add(subscriber)
+        self.wake.set()
+        return subscriber
+
+    def unsubscribe_audio(self, subscriber: queue.Queue[bytes]) -> None:
+        with self.lock:
+            self.audio_subscribers.discard(subscriber)
 
     def close(self) -> None:
         self.stop.set()
@@ -97,10 +177,26 @@ class CloudMediaWorker:
                 except queue.Full:
                     pass
 
+    def _broadcast_audio(self, chunk: bytes) -> None:
+        with self.lock:
+            subscribers = tuple(self.audio_subscribers)
+        for subscriber in subscribers:
+            try:
+                subscriber.put_nowait(chunk)
+            except queue.Full:
+                try:
+                    subscriber.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    subscriber.put_nowait(chunk)
+                except queue.Full:
+                    pass
+
     def _run(self) -> None:
         while not self.stop.is_set():
             with self.lock:
-                has_subscribers = bool(self.subscribers)
+                has_subscribers = bool(self.subscribers or self.audio_subscribers)
             if not has_subscribers:
                 self.wake.wait(timeout=1)
                 self.wake.clear()
@@ -180,6 +276,9 @@ class CloudMediaWorker:
 
         ffmpeg = None
         jpeg_thread = None
+        audio_ffmpeg = None
+        audio_thread = None
+        audio_extractor = _MulawTsExtractor()
         try:
             with socket.create_connection((host, parsed.port or 443), timeout=15) as plain_socket:
                 with self.client.verify_context.wrap_socket(
@@ -236,6 +335,8 @@ class CloudMediaWorker:
                         daemon=True,
                     )
                     jpeg_thread.start()
+                    if self._has_audio_subscribers():
+                        audio_ffmpeg, audio_thread = self._start_audio_encoder()
                     tls_socket.settimeout(20)
                     while not self.stop.is_set():
                         boundary = self._read_line(tls_socket, buffer)
@@ -266,8 +367,21 @@ class CloudMediaWorker:
                         # MPEG-TS video stream. The length and encryption flag
                         # are the reliable framing signals here.
                         is_video = length > 0
+                        if (
+                            is_video
+                            and audio_ffmpeg is None
+                            and self._has_audio_subscribers()
+                        ):
+                            audio_ffmpeg, audio_thread = self._start_audio_encoder()
                         if is_video and ffmpeg.stdin is not None:
-                            self._pipe_exact(tls_socket, buffer, length, ffmpeg.stdin)
+                            self._pipe_exact(
+                                tls_socket,
+                                buffer,
+                                length,
+                                ffmpeg.stdin,
+                                audio_extractor,
+                                audio_ffmpeg,
+                            )
                         else:
                             self._read_exact(tls_socket, buffer, length)
         finally:
@@ -284,6 +398,69 @@ class CloudMediaWorker:
                     ffmpeg.kill()
                 if jpeg_thread is not None:
                     jpeg_thread.join(timeout=2)
+            if audio_ffmpeg is not None and audio_ffmpeg.stdin is not None:
+                try:
+                    audio_ffmpeg.stdin.close()
+                except OSError:
+                    pass
+            if audio_ffmpeg is not None:
+                try:
+                    audio_ffmpeg.terminate()
+                    audio_ffmpeg.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    audio_ffmpeg.kill()
+                if audio_thread is not None:
+                    audio_thread.join(timeout=2)
+
+    def _has_audio_subscribers(self) -> bool:
+        with self.lock:
+            return bool(self.audio_subscribers)
+
+    def _start_audio_encoder(self) -> tuple[subprocess.Popen, threading.Thread]:
+        encoder = subprocess.Popen(
+            [
+                self.client_ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "mulaw",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-i",
+                "pipe:0",
+                "-vn",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "64k",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-write_xing",
+                "0",
+                "-flush_packets",
+                "1",
+                "-f",
+                "mp3",
+                "pipe:1",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0,
+        )
+        reader = threading.Thread(
+            target=self._read_audio,
+            args=(encoder,),
+            name="tapo-audio-reader",
+            daemon=True,
+        )
+        reader.start()
+        return encoder, reader
 
     @staticmethod
     def _read_http_headers(sock: ssl.SSLSocket, buffer: bytearray) -> bytes:
@@ -330,6 +507,8 @@ class CloudMediaWorker:
         buffer: bytearray,
         length: int,
         output,
+        audio_extractor: _MulawTsExtractor | None = None,
+        audio_ffmpeg: subprocess.Popen | None = None,
     ) -> None:
         """Forward a video part while it arrives instead of buffering its I-frame."""
         remaining = length
@@ -342,6 +521,14 @@ class CloudMediaWorker:
             amount = min(remaining, len(buffer))
             output.write(bytes(buffer[:amount]))
             output.flush()
+            if audio_extractor is not None and audio_ffmpeg is not None:
+                audio = audio_extractor.feed(bytes(buffer[:amount]))
+                if audio and audio_ffmpeg.stdin is not None and audio_ffmpeg.poll() is None:
+                    try:
+                        audio_ffmpeg.stdin.write(audio)
+                        audio_ffmpeg.stdin.flush()
+                    except OSError:
+                        pass
             del buffer[:amount]
             remaining -= amount
 
@@ -370,6 +557,16 @@ class CloudMediaWorker:
                 del buffer[: end + 2]
                 self._broadcast(frame)
 
+    def _read_audio(self, ffmpeg: subprocess.Popen) -> None:
+        if ffmpeg.stdout is None:
+            return
+        read1 = getattr(ffmpeg.stdout, "read1", ffmpeg.stdout.read)
+        while True:
+            chunk = read1(8192)
+            if not chunk:
+                return
+            self._broadcast_audio(chunk)
+
     @property
     def client_ffmpeg(self) -> str:
         return os.environ.get("TOPO_FFMPEG") or getattr(self.client, "ffmpeg", "ffmpeg")
@@ -377,6 +574,7 @@ class CloudMediaWorker:
 
 class CloudAppState:
     STATUS_CACHE_TTL = 10.0
+    RECORDING_PREVIEW_SECONDS = 10
 
     def __init__(self, client: TapoCloud, base_url: str, devices: list[dict]):
         self.client = client
@@ -390,6 +588,10 @@ class CloudAppState:
         self.ptz_lock = threading.Lock()
         self.ptz_states: dict[int, bool] = {}
         self.ptz_checked_at: dict[int, float] = {}
+        self.recording_jobs: dict[str, dict] = {}
+        self.recording_active: dict[int, str] = {}
+        self.recording_jobs_lock = threading.Lock()
+        self.recording_dir = Path(tempfile.mkdtemp(prefix="topo-recordings-"))
 
     def worker(self, index: int) -> CloudMediaWorker:
         with self.workers_lock:
@@ -404,6 +606,7 @@ class CloudAppState:
             workers = tuple(self.workers.values())
         for worker in workers:
             worker.close()
+        shutil.rmtree(self.recording_dir, ignore_errors=True)
         self.client.close()
 
     def reset_worker(self, index: int) -> None:
@@ -467,6 +670,245 @@ class CloudAppState:
 
     def move_camera(self, index: int, x: int, y: int) -> None:
         self.client.move_motor(self.base_url, self.devices[index], x, y)
+
+    def recording_dates(self, index: int, days: int = 7) -> dict:
+        return self.client.recording_dates(self.base_url, self.devices[index], days)
+
+    def recordings_for_day(self, index: int, date: str) -> dict:
+        return self.client.recordings_for_day(self.base_url, self.devices[index], date)
+
+    @staticmethod
+    def _extract_mulaw_audio(ts_path: Path, audio_path: Path) -> int:
+        """Extract Tapo's private G.711 μ-law PES audio from an MPEG-TS file."""
+        data = ts_path.read_bytes()
+        audio_pids: set[int] = set()
+        for offset in range(0, len(data) - 187, 188):
+            packet = data[offset : offset + 188]
+            if packet[0] != 0x47 or not (packet[1] & 0x40):
+                continue
+            pid = ((packet[1] & 0x1F) << 8) | packet[2]
+            adaptation = (packet[3] >> 4) & 0x3
+            if not adaptation & 1:
+                continue
+            payload_offset = 4
+            if adaptation & 2:
+                payload_offset += 1 + packet[4]
+            payload = packet[payload_offset:]
+            if len(payload) >= 4 and payload[:3] == b"\x00\x00\x01":
+                stream_id = payload[3]
+                if 0xC0 <= stream_id <= 0xDF:
+                    audio_pids.add(pid)
+        if not audio_pids:
+            return 0
+
+        audio = bytearray()
+        remaining_by_pid: dict[int, int] = {}
+        for offset in range(0, len(data) - 187, 188):
+            packet = data[offset : offset + 188]
+            if packet[0] != 0x47:
+                continue
+            pid = ((packet[1] & 0x1F) << 8) | packet[2]
+            if pid not in audio_pids:
+                continue
+            adaptation = (packet[3] >> 4) & 0x3
+            if not adaptation & 1:
+                continue
+            payload_offset = 4
+            if adaptation & 2:
+                payload_offset += 1 + packet[4]
+            if payload_offset >= 188:
+                continue
+            payload = packet[payload_offset:]
+            if packet[1] & 0x40:
+                remaining_by_pid[pid] = 0
+                if len(payload) < 14 or payload[:3] != b"\x00\x00\x01":
+                    continue
+                packet_length = int.from_bytes(payload[4:6], "big")
+                header_length = 9 + payload[8]
+                if packet_length <= 0 or header_length > 6 + packet_length:
+                    continue
+                remaining_by_pid[pid] = 6 + packet_length - header_length
+                payload = payload[header_length:]
+            remaining = remaining_by_pid.get(pid, 0)
+            if remaining <= 0:
+                continue
+            take = min(len(payload), remaining)
+            audio.extend(payload[:take])
+            remaining_by_pid[pid] = remaining - take
+        if not audio:
+            return 0
+        audio_path.write_bytes(audio)
+        return len(audio)
+
+    def start_recording(self, index: int, start: int, end: int) -> str:
+        if end <= start:
+            raise ValueError("recording end must be after start")
+        if end - start > 3600:
+            raise ValueError("recording segments longer than one hour are not supported")
+        job_id = uuid.uuid4().hex
+        job = {
+            "status": "preparing",
+            "camera": index,
+            "start": start,
+            "end": end,
+            "progress": 0,
+            "message": "Starting recording preview…",
+            "error": "",
+            "path": str(self.recording_dir / f"{job_id}.mp4"),
+        }
+        with self.recording_jobs_lock:
+            active_job_id = self.recording_active.get(index)
+            if active_job_id:
+                active_job = self.recording_jobs.get(active_job_id)
+                if active_job and active_job.get("status") == "preparing":
+                    raise RuntimeError(
+                        "another recording preview is already preparing for this camera"
+                    )
+                self.recording_active.pop(index, None)
+            self.recording_jobs[job_id] = job
+            self.recording_active[index] = job_id
+        thread = threading.Thread(
+            target=self._prepare_recording,
+            args=(job_id, index, start, end),
+            name=f"topo-recording-{job_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        return job_id
+
+    def _prepare_recording(self, job_id: str, index: int, start: int, end: int) -> None:
+        ts_path = self.recording_dir / f"{job_id}.ts"
+        audio_path = self.recording_dir / f"{job_id}.mulaw"
+        mp4_path = self.recording_dir / f"{job_id}.mp4"
+
+        def update_job(**values: object) -> None:
+            with self.recording_jobs_lock:
+                job = self.recording_jobs.get(job_id)
+                if job is not None:
+                    job.update(values)
+
+        def report_progress(progress: int, message: str) -> None:
+            update_job(progress=max(0, min(progress, 99)), message=message)
+
+        try:
+            bytes_written = self.client.download_recording(
+                self.base_url,
+                self.devices[index],
+                start,
+                end,
+                str(ts_path),
+                progress=report_progress,
+            )
+            if bytes_written <= 0:
+                raise RuntimeError("recording relay returned no media")
+            audio_bytes = self._extract_mulaw_audio(ts_path, audio_path)
+            update_job(progress=85, message="Converting recording…")
+            ffmpeg = os.environ.get("TOPO_FFMPEG") or "ffmpeg"
+            ffmpeg_args = [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(ts_path),
+            ]
+            if audio_bytes:
+                ffmpeg_args.extend(
+                    [
+                        "-f",
+                        "mulaw",
+                        "-ar",
+                        "16000",
+                        "-ac",
+                        "1",
+                        "-i",
+                        str(audio_path),
+                    ]
+                )
+            ffmpeg_args.extend(
+                [
+                    "-t",
+                    str(max(end - start, 1)),
+                    "-map",
+                    "0:v:0",
+                ]
+            )
+            if audio_bytes:
+                ffmpeg_args.extend(
+                    ["-map", "1:a:0", "-c:a", "aac", "-b:a", "64k"]
+                )
+            else:
+                ffmpeg_args.append("-an")
+            ffmpeg_args.extend(
+                [
+                    "-c:v",
+                    "copy",
+                    "-movflags",
+                    "+faststart",
+                    str(mp4_path),
+                ]
+            )
+            result = subprocess.run(
+                ffmpeg_args,
+                capture_output=True,
+                text=True,
+                timeout=max((end - start) * 5 + 180, 300),
+                check=False,
+            )
+            if result.returncode != 0 or not mp4_path.is_file() or mp4_path.stat().st_size == 0:
+                detail = (result.stderr or "").strip().splitlines()[-1:] or ["FFmpeg could not prepare the recording"]
+                raise RuntimeError(detail[0][:240])
+            with self.recording_jobs_lock:
+                job = self.recording_jobs.get(job_id)
+                if job is not None:
+                    job.update(
+                        {
+                            "status": "ready",
+                            "progress": 100,
+                            "message": "Recording ready.",
+                            "size": mp4_path.stat().st_size,
+                        }
+                    )
+        except Exception as exc:
+            with self.recording_jobs_lock:
+                job = self.recording_jobs.get(job_id)
+                if job is not None:
+                    job.update(
+                        {
+                            "status": "error",
+                            "message": "Recording preparation failed.",
+                            "error": str(exc)[:240],
+                        }
+                    )
+            with contextlib.suppress(OSError):
+                mp4_path.unlink()
+        finally:
+            with contextlib.suppress(OSError):
+                ts_path.unlink()
+            with contextlib.suppress(OSError):
+                audio_path.unlink()
+            with self.recording_jobs_lock:
+                if self.recording_active.get(index) == job_id:
+                    self.recording_active.pop(index, None)
+
+    def recording_job(self, job_id: str) -> dict | None:
+        with self.recording_jobs_lock:
+            job = self.recording_jobs.get(job_id)
+            if job is None:
+                return None
+            result = {key: value for key, value in job.items() if key != "path"}
+        if result.get("status") == "ready":
+            result["video_url"] = f"/recordings/{job_id}.mp4"
+        return result
+
+    def recording_path(self, job_id: str) -> Path | None:
+        with self.recording_jobs_lock:
+            job = self.recording_jobs.get(job_id)
+            if not job or job.get("status") != "ready":
+                return None
+            path = Path(str(job.get("path") or ""))
+        return path if path.is_file() and path.parent == self.recording_dir else None
 
     def public_camera(self, index: int) -> dict:
         device = self.devices[index]
@@ -644,9 +1086,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError, OSError):
+            self.wfile.write(body)
 
-    def send_file(self, path: Path) -> None:
+    def send_file(self, path: Path, download_name: str | None = None) -> None:
         try:
             body = path.read_bytes()
         except FileNotFoundError:
@@ -657,6 +1100,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if download_name:
+            self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Connection", "close")
@@ -720,8 +1165,35 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             worker.unsubscribe(subscriber)
 
+    def stream_audio(self, state: CloudAppState, index: int) -> None:
+        worker = state.worker(index)
+        subscriber = worker.subscribe_audio()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            while True:
+                if self.context.current_state() is not state:
+                    raise ConnectionError("session ended")
+                try:
+                    chunk = subscriber.get(timeout=20)
+                except queue.Empty:
+                    if worker.last_error:
+                        raise ConnectionError(worker.last_error)
+                    continue
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionError, OSError):
+            pass
+        finally:
+            worker.unsubscribe_audio(subscriber)
+
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        request_path = urlsplit(self.path).path
+        parsed_url = urlsplit(self.path)
+        request_path = parsed_url.path
         if request_path == "/":
             self.send_file(WEB_ROOT / "index.html")
             return
@@ -732,12 +1204,78 @@ class Handler(BaseHTTPRequestHandler):
         if request_path == "/api/session":
             self.send_json(self.context.session_info())
             return
+        if request_path.startswith("/api/recording-jobs/"):
+            state = self.require_state()
+            if state is None:
+                return
+            job_id = request_path[len("/api/recording-jobs/") :].strip("/")
+            if not job_id or "/" in job_id:
+                self.send_json({"ok": False, "error": "invalid recording job"}, 404)
+                return
+            job = state.recording_job(job_id)
+            if job is None:
+                self.send_json({"ok": False, "error": "recording job not found"}, 404)
+            else:
+                self.send_json({"ok": True, "job_id": job_id, **job})
+            return
+        if request_path.startswith("/recordings/") and request_path.endswith(".mp4"):
+            state = self.require_state()
+            if state is None:
+                return
+            job_id = request_path[len("/recordings/") : -len(".mp4")].strip("/")
+            if not job_id or "/" in job_id:
+                self.send_error(404)
+                return
+            path = state.recording_path(job_id)
+            if path is None:
+                self.send_error(404)
+            else:
+                download_name = None
+                if parse_qs(parsed_url.query).get("download") == ["1"]:
+                    download_name = f"topo-recording-{job_id[:8]}.mp4"
+                self.send_file(path, download_name=download_name)
+            return
         if request_path == "/api/cameras":
             state = self.require_state()
             if state is not None:
                 self.send_json({"cameras": state.public_cameras()})
             return
         if request_path.startswith("/api/cameras/"):
+            recordings_prefix = "/api/cameras/"
+            recordings_parts = request_path[len(recordings_prefix) :].strip("/").split("/")
+            if len(recordings_parts) == 3 and recordings_parts[1] == "recordings" and recordings_parts[2] == "dates":
+                state = self.require_state()
+                if state is None:
+                    return
+                try:
+                    index = int(recordings_parts[0])
+                    state.devices[index]
+                    raw_days = parse_qs(parsed_url.query).get("days", ["7"])[0]
+                    days = int(raw_days)
+                    if not 1 <= days <= 31:
+                        raise ValueError("days must be between 1 and 31")
+                    self.send_json({"ok": True, **state.recording_dates(index, days)})
+                except (ValueError, IndexError) as exc:
+                    self.send_json({"ok": False, "error": str(exc)}, 400)
+                except (RuntimeError, OSError) as exc:
+                    self.send_json({"ok": False, "error": str(exc)}, 502)
+                return
+            if len(recordings_parts) == 2 and recordings_parts[1] == "recordings":
+                state = self.require_state()
+                if state is None:
+                    return
+                try:
+                    index = int(recordings_parts[0])
+                    state.devices[index]
+                    date = parse_qs(parsed_url.query).get("date", [""])[0]
+                    if not date:
+                        raise ValueError("date is required")
+                    self.send_json({"ok": True, **state.recordings_for_day(index, date)})
+                except (ValueError, IndexError) as exc:
+                    self.send_json({"ok": False, "error": str(exc)}, 400)
+                except (RuntimeError, OSError) as exc:
+                    self.send_json({"ok": False, "error": str(exc)}, 502)
+                return
             raw_index = request_path[len("/api/cameras/") :].strip("/")
             if raw_index and "/" not in raw_index:
                 state = self.require_state()
@@ -763,6 +1301,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "invalid camera"}, 404)
                 return
             self.stream_mjpeg(state, index)
+            return
+        if request_path.startswith("/audio/") and request_path.endswith(".mp3"):
+            state = self.require_state()
+            if state is None:
+                return
+            raw_index = request_path[len("/audio/") : -len(".mp3")].strip("/")
+            try:
+                index = int(raw_index)
+                state.devices[index]
+            except (ValueError, IndexError):
+                self.send_json({"ok": False, "error": "invalid camera"}, 404)
+                return
+            self.stream_audio(state, index)
             return
         if request_path.startswith("/api/cameras/") and request_path.endswith("/relay-check"):
             state = self.require_state()
@@ -826,6 +1377,28 @@ class Handler(BaseHTTPRequestHandler):
             return
         state = self.require_state()
         if state is None:
+            return
+        if request_path.startswith(prefix) and request_path.endswith("/recordings/play"):
+            raw_index = request_path[len(prefix) : -len("/recordings/play")].strip("/")
+            try:
+                index = int(raw_index)
+                state.devices[index]
+                payload = self.read_json_body()
+                start = payload.get("start")
+                end = payload.get("end")
+                if (
+                    isinstance(start, bool)
+                    or isinstance(end, bool)
+                    or not isinstance(start, int)
+                    or not isinstance(end, int)
+                ):
+                    raise ValueError("start and end must be integers")
+                job_id = state.start_recording(index, start, end)
+                self.send_json({"ok": True, "job_id": job_id}, 202)
+            except (ValueError, IndexError) as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 400)
+            except (RuntimeError, OSError) as exc:
+                self.send_json({"ok": False, "error": str(exc)}, 502)
             return
         if request_path.endswith("/privacy"):
             suffix = "/privacy"

@@ -68,12 +68,42 @@ class TapoDesktop(Gtk.Application):
         webview = WebKit2.WebView()
         settings = webview.get_settings()
         settings.set_property("enable-developer-extras", False)
+        webview.get_context().connect("download-started", self._handle_download_started)
         webview.connect("decide-policy", self._handle_navigation)
         # The UI is served locally, but WebKit may otherwise reuse an older
         # cached index.html after an application update.
         webview.load_uri(f"http://127.0.0.1:{port}/?ui={uuid.uuid4().hex}")
         self.window.add(webview)
         self.window.show_all()
+
+    def _handle_download_started(self, _context, download) -> None:
+        download.connect("decide-destination", self._choose_download_destination)
+
+    def _choose_download_destination(self, download, suggested_filename) -> bool:
+        if self.window is None:
+            download.cancel()
+            return False
+        dialog = Gtk.FileChooserDialog(
+            title="Save Topo recording",
+            parent=self.window,
+            action=Gtk.FileChooserAction.SAVE,
+            buttons=(
+                "Cancel",
+                Gtk.ResponseType.CANCEL,
+                "Save",
+                Gtk.ResponseType.ACCEPT,
+            ),
+        )
+        dialog.set_do_overwrite_confirmation(True)
+        dialog.set_current_name(suggested_filename or "topo-recording.mp4")
+        response = dialog.run()
+        filename = dialog.get_filename() if response == Gtk.ResponseType.ACCEPT else None
+        dialog.destroy()
+        if not filename:
+            download.cancel()
+            return False
+        download.set_destination(Gio.File.new_for_path(filename).get_uri())
+        return True
 
     @staticmethod
     def _handle_navigation(_webview, decision, decision_type):

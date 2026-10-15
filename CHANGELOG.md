@@ -2,6 +2,43 @@
 
 All notable changes to Topo are documented here.
 
+## Unreleased
+
+No changes yet.
+
+## [0.1.4] - 2026-10-15
+
+### Added
+
+- SD-card recording calendar and 24-hour timeline for each camera.
+- Full playback of selected SD-card segments through the integrated video player.
+- Audio playback in SD recordings by decoding the C200 G.711 relay track.
+- Download of individual SD-card recording clips as MP4 files.
+- A readable recording-segment list with larger click targets for dense timelines.
+- Native save dialogs for recording downloads on Linux and Windows.
+- Per-camera live audio through the cloud relay, enabled by an explicit audio button.
+- Camera-local timezone handling for recording dates and clip times.
+
+### Fixed
+
+- Reused the prepared recording for downloads instead of requesting the same
+  clip from the cloud relay a second time.
+- Removed the 10-second playback limit from selected recording segments and
+  extended relay waiting time according to the requested clip duration.
+
+### Notes
+
+- The release includes the Linux desktop installer and the Windows x64
+  installer workflow.
+
+## [0.1.3] - 2026-10-14
+
+### Fixed
+
+- Stabilized GitHub Pages deployment after stale deployments could block a new
+  publication.
+- Added the Windows release workflow and installation documentation.
+
 ## [0.1.2] - 2026-10-14
 
 ### Fixed
@@ -44,5 +81,4 @@ All notable changes to Topo are documented here.
 - Tapo C200 is currently the tested camera model.
 - The cloud integration uses undocumented Tapo endpoints and may require
   updates if Tapo changes its service.
-- Audio, recording, snapshots, and desktop motion notifications are not yet
-  implemented.
+- Live preview audio, snapshots, and desktop motion notifications are not yet implemented.

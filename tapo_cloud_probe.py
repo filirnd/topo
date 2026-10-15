@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 import getpass
 import hashlib
 import hmac
@@ -199,6 +202,55 @@ def create_verify_context() -> ssl.SSLContext:
         raise RuntimeError(f"missing TP-Link trust store: {TP_LINK_ROOTS_PATH}")
     context.load_verify_locations(cafile=str(TP_LINK_ROOTS_PATH))
     return context
+
+
+class _MpegTsPtsTracker:
+    """Track MPEG-TS PTS progress so playback stops at the requested span."""
+
+    def __init__(self) -> None:
+        self.first: int | None = None
+        self.last: int | None = None
+
+    def update(self, payload: bytes) -> None:
+        index = 0
+        while index + 188 <= len(payload):
+            if payload[index] != 0x47:
+                index += 1
+                continue
+            if payload[index + 1] & 0x40 == 0:
+                index += 188
+                continue
+            offset = index + 4
+            adaptation = (payload[index + 3] >> 4) & 0x3
+            if adaptation in (2, 3):
+                if offset >= index + 188:
+                    index += 188
+                    continue
+                offset += 1 + payload[offset]
+            if offset + 14 > index + 188 or payload[offset : offset + 3] != b"\x00\x00\x01":
+                index += 188
+                continue
+            if payload[offset + 7] & 0x80 == 0:
+                index += 188
+                continue
+            position = offset + 9
+            pts = (
+                ((payload[position] & 0x0E) << 29)
+                | (payload[position + 1] << 22)
+                | ((payload[position + 2] & 0xFE) << 14)
+                | (payload[position + 3] << 7)
+                | (payload[position + 4] >> 1)
+            )
+            if self.first is None:
+                self.first = self.last = pts
+            elif self.last is not None and pts > self.last:
+                self.last = pts
+            index += 188
+
+    def seconds(self) -> float:
+        if self.first is None or self.last is None or self.last < self.first:
+            return 0.0
+        return (self.last - self.first) / 90000.0
 
 
 class TapoCloud:
@@ -543,6 +595,413 @@ class TapoCloud:
         if not isinstance(responses, list):
             raise RuntimeError("cloud control response has no responses")
         return responses
+
+    @staticmethod
+    def _camera_service_result(responses: list[dict], method: str) -> dict:
+        if not responses or not isinstance(responses[0], dict):
+            raise RuntimeError(f"incomplete {method} response")
+        response = responses[0]
+        code = error_code(response)
+        if code != 0:
+            raise RuntimeError(f"{method} rejected by camera: code {code}")
+        return result_of(response)
+
+    @staticmethod
+    def _parse_camera_timezone(value: object) -> timezone:
+        """Parse Tapo's UTC offset without changing the camera setting."""
+        text = str(value or "UTC+00:00").strip().upper()
+        match = re.search(r"UTC\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?", text)
+        if not match:
+            return timezone.utc
+        sign = 1 if match.group(1) == "+" else -1
+        hours = int(match.group(2))
+        minutes = int(match.group(3) or "0")
+        return timezone(sign * timedelta(hours=hours, minutes=minutes))
+
+    @staticmethod
+    def _camera_timezone_name(value: object) -> str:
+        text = str(value or "UTC+00:00").strip()
+        return text if text else "UTC+00:00"
+
+    def _recording_timezone(
+        self, base_url: str, device: dict
+    ) -> tuple[str, timezone]:
+        responses = self.services_sync(
+            base_url,
+            device,
+            [{"method": "getTimezone", "params": {"system": {"name": "basic"}}}],
+            fresh_connection=True,
+        )
+        result = self._camera_service_result(responses, "getTimezone")
+        name = result.get("system", {}).get("basic", {}).get("timezone")
+        return self._camera_timezone_name(name), self._parse_camera_timezone(name)
+
+    def recording_dates(
+        self, base_url: str, device: dict, days: int = 7
+    ) -> dict:
+        """Return camera-local calendar days containing SD recordings."""
+        days = max(1, min(int(days), 31))
+        timezone_name, camera_tz = self._recording_timezone(base_url, device)
+        camera_now = datetime.now(camera_tz)
+        start_date = (camera_now - timedelta(days=days)).strftime("%Y%m%d")
+        end_date = camera_now.strftime("%Y%m%d")
+        requests = [
+            {
+                "method": "getSdCardStatus",
+                "params": {"harddisk_manage": {"table": ["hd_info"]}},
+            },
+            {
+                "method": "searchDateWithVideo",
+                "params": {
+                    "playback": {
+                        "search_year_utility": {
+                            "channel": [0],
+                            "start_date": start_date,
+                            "end_date": end_date,
+                        }
+                    }
+                },
+            },
+        ]
+        responses = self.services_sync(
+            base_url, device, requests, fresh_connection=True
+        )
+        if len(responses) < 2:
+            raise RuntimeError("incomplete SD recording response")
+        sd_result = self._camera_service_result([responses[0]], "getSdCardStatus")
+        date_result = self._camera_service_result(
+            [responses[1]], "searchDateWithVideo"
+        )
+        dates: set[str] = set()
+        for item in date_result.get("playback", {}).get("search_results", []):
+            if not isinstance(item, dict):
+                continue
+            for value in item.values():
+                if isinstance(value, dict) and value.get("date"):
+                    dates.add(str(value["date"]))
+        sd_data = sd_result.get("harddisk_manage")
+        return {
+            "timezone": timezone_name,
+            "sd_available": bool(sd_data),
+            "dates": sorted(dates),
+        }
+
+    def recordings_for_day(
+        self, base_url: str, device: dict, date: str
+    ) -> dict:
+        """Return SD recording segments for a camera-local YYYYMMDD day."""
+        if not re.fullmatch(r"\d{8}", date):
+            raise ValueError("date must use YYYYMMDD format")
+        timezone_name, camera_tz = self._recording_timezone(base_url, device)
+        user_responses = self.services_sync(
+            base_url,
+            device,
+            [{"method": "getUserID", "params": {"system": {"get_user_id": "null"}}}],
+            fresh_connection=True,
+        )
+        user_result = self._camera_service_result(user_responses, "getUserID")
+        user_id = user_result.get("user_id")
+        if not user_id:
+            raise RuntimeError("camera returned no playback user id")
+        responses = self.services_sync(
+            base_url,
+            device,
+            [
+                {
+                    "method": "searchVideoOfDay",
+                    "params": {
+                        "playback": {
+                            "search_video_utility": {
+                                "channel": 0,
+                                "date": date,
+                                "end_index": 999999999,
+                                "id": int(user_id),
+                                "start_index": 0,
+                            }
+                        }
+                    },
+                }
+            ],
+            fresh_connection=True,
+        )
+        result = self._camera_service_result(responses, "searchVideoOfDay")
+        day_start = datetime.strptime(date, "%Y%m%d").replace(tzinfo=camera_tz)
+        day_end = day_start + timedelta(days=1)
+        clips: list[dict] = []
+        for item in result.get("playback", {}).get("search_video_results", []):
+            if not isinstance(item, dict):
+                continue
+            for value in item.values():
+                if not isinstance(value, dict):
+                    continue
+                try:
+                    start = int(value["startTime"])
+                    end = int(value["endTime"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if end <= start:
+                    continue
+                start_local = datetime.fromtimestamp(start, camera_tz)
+                end_local = datetime.fromtimestamp(end, camera_tz)
+                clips.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "duration": end - start,
+                        "type": int(value.get("vedio_type", 0) or 0),
+                        "start_local": start_local.isoformat(),
+                        "end_local": end_local.isoformat(),
+                    }
+                )
+        clips.sort(key=lambda clip: (clip["start"], clip["end"]))
+        return {
+            "date": date,
+            "timezone": timezone_name,
+            "day_start": int(day_start.timestamp()),
+            "day_end": int(day_end.timestamp()),
+            "clips": clips,
+        }
+
+    @staticmethod
+    def _recording_control_frame(payload: str) -> bytes:
+        body = payload.encode("utf-8")
+        return (
+            # The relay's multipart header contains the boundary marker with
+            # two dashes; each client part adds the multipart delimiter's two
+            # additional dashes, matching the Android playback client.
+            b"----client-stream-boundary--\r\n"
+            b"Content-Type: application/json\r\n"
+            b"X-Data-Window-Size: 40\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+            + body
+            + b"\r\n"
+        )
+
+    @staticmethod
+    def _recording_read_line(sock: socket.socket, buffer: bytearray) -> bytes:
+        while b"\n" not in buffer:
+            chunk = sock.recv(8192)
+            if not chunk:
+                raise EOFError("relay closed while reading a line")
+            buffer.extend(chunk)
+            if len(buffer) > 1 << 20:
+                raise RuntimeError("relay line is too large")
+        end = buffer.index(b"\n") + 1
+        line = bytes(buffer[:end])
+        del buffer[:end]
+        return line
+
+    @classmethod
+    def _recording_read_headers(
+        cls, sock: socket.socket, buffer: bytearray
+    ) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        while True:
+            line = cls._recording_read_line(sock, buffer).rstrip(b"\r\n")
+            if not line:
+                return headers
+            if b":" in line:
+                key, value = line.split(b":", 1)
+                headers[key.decode("latin-1").strip().lower()] = value.decode(
+                    "latin-1"
+                ).strip()
+
+    @classmethod
+    def _recording_read_part(
+        cls, sock: socket.socket, buffer: bytearray
+    ) -> tuple[str, bytes]:
+        while True:
+            line = cls._recording_read_line(sock, buffer)
+            if b"--device-stream-boundary--" in line:
+                break
+        headers = cls._recording_read_headers(sock, buffer)
+        try:
+            length = int(headers.get("content-length", "0"))
+        except ValueError as exc:
+            raise RuntimeError("recording relay returned an invalid part length") from exc
+        if length < 0 or length > 64 << 20:
+            raise RuntimeError("recording relay returned an invalid part size")
+        while len(buffer) < length:
+            chunk = sock.recv(min(1 << 20, length - len(buffer)))
+            if not chunk:
+                raise EOFError("relay closed during a recording part")
+            buffer.extend(chunk)
+        payload = bytes(buffer[:length])
+        del buffer[:length]
+        return headers.get("content-type", ""), payload
+
+    def download_recording(
+        self,
+        base_url: str,
+        device: dict,
+        start: int,
+        end: int,
+        out_path: str,
+        progress: Callable[[int, str], None] | None = None,
+    ) -> int:
+        """Download one SD segment through the cloud playback relay as MPEG-TS."""
+        if end <= start:
+            raise ValueError("recording end must be after start")
+        device_id = str(device.get("deviceId") or "")
+        if not device_id:
+            raise RuntimeError("camera has no deviceId")
+        if progress:
+            progress(5, "Connecting to playback relay…")
+        user_responses = self.services_sync(
+            base_url,
+            device,
+            [{"method": "getUserID", "params": {"system": {"get_user_id": "null"}}}],
+            fresh_connection=True,
+        )
+        user_result = self._camera_service_result(user_responses, "getUserID")
+        client_id = int(user_result.get("user_id") or 0)
+        if not client_id:
+            raise RuntimeError("camera returned no playback user id")
+        self.discover_cipc_url(base_url)
+        player_id = str(uuid.uuid4())
+        track_id = f"topo-playback-{device_id}-{start}"
+        request_param = {
+            "cloudType": 2,
+            "customParams": '{"audio_config":{"encode_type":"G711ulaw","sample_rate":"16"}}',
+            "dataTimeoutCount": 0,
+            "deviceId": device_id,
+            "deviceType": device.get("deviceType") or "SMART.IPCAMERA",
+            "playerId": player_id,
+            "preConnection": 0,
+            "resolution": "HD",
+            "rootCaVer": "1",
+            "streamType": 1,
+            "trackId": track_id,
+        }
+        response = self.post_cipc("/v2/relay/request", request_param, player_id)
+        relay_info = result_of(response)
+        if error_code(response) != 0 or not isinstance(relay_info, dict):
+            raise RuntimeError(f"recording relay rejected: code={error_code(response)}")
+        relay_url = str(relay_info.get("relayUrl") or "")
+        relay_token = str(relay_info.get("relayToken") or relay_info.get("sessionToken") or "")
+        if not relay_url or not relay_token:
+            raise RuntimeError("recording relay response is incomplete")
+        if progress:
+            progress(15, "Starting camera playback…")
+        parsed = urlsplit(relay_url if "://" in relay_url else "https://" + relay_url)
+        host = parsed.hostname
+        if not host:
+            raise RuntimeError("recording relay has no hostname")
+        dial_host = str(relay_info.get("relayIp") or host)
+        path = parsed.path or "/"
+        path += ("?" + parsed.query if parsed.query else "") + ("&" if parsed.query else "?") + "retryTime=0"
+        headers = {
+            "Host": host,
+            "User-Agent": f"Client={APP_NAME} Android {APP_VERSION}/1.3",
+            "Accept": "*/*",
+            "Keep-Relay": "3600",
+            "Content-Type": "multipart/mixed;boundary=--client-stream-boundary--",
+            "Content-Length": "9223372036854775807",
+            "X-token": relay_token,
+            # Playback relay accepts the media client identity separately from
+            # the camera model; this is the value used by the reference cloud
+            # client and by the Tapo app's playback path.
+            "X-Client-Model": "OnTapo",
+            "X-Client-UUID": player_id,
+            "X-Track-Id": track_id,
+            "X-Redirect-Times": "0",
+            "X-Pull-Mode": "2",
+            "X-Compete": "1",
+            "X-Version": "2.0",
+            "X-Arrive-Latency": "200",
+            "Connection": "Keep-alive",
+        }
+        if relay_info.get("elbCookie"):
+            headers["Cookie"] = str(relay_info["elbCookie"])
+        raw_head = (
+            f"POST {path} HTTP/1.1\r\n"
+            + "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+            + "\r\n"
+        ).encode("ascii")
+        sequence = 1000 + (start % 20000)
+        playback_request = (
+            f'{{"type":"request","seq":{sequence},"params":{{"playback":'
+            f'{{"client_id":{client_id},"channels":[0,1],"scale":"1/1",'
+            f'"start_time":"{start}","end_time":"{end}","event_type":[1,2]}},'
+            f'"method":"get"}}}}'
+        )
+        bytes_written = 0
+        buffer = bytearray()
+        pts = _MpegTsPtsTracker()
+        requested_seconds = max(end - start, 1)
+        with socket.create_connection((dial_host, parsed.port or 443), timeout=20) as plain:
+            with self.verify_context.wrap_socket(plain, server_hostname=host) as sock:
+                try:
+                    sock.settimeout(20)
+                    sock.sendall(raw_head + self._recording_control_frame(playback_request))
+                    status_line = self._recording_read_line(sock, buffer).decode(
+                        "latin-1", "replace"
+                    )
+                    response_headers = self._recording_read_headers(sock, buffer)
+                    if not status_line.startswith("HTTP/") or " 200 " not in status_line:
+                        with contextlib.suppress(socket.timeout, OSError):
+                            sock.settimeout(1)
+                            buffer.extend(sock.recv(4096))
+                        detail = bytes(buffer).decode("latin-1", "replace").strip()
+                        raise RuntimeError(
+                            f"recording relay HTTP failure ({status_line.strip()} / "
+                            f"{response_headers.get('x-request-type', 'unknown')})"
+                            + (f": {detail[:180]}" if detail else "")
+                        )
+                    if progress:
+                        progress(25, "Downloading recording…")
+                    with open(out_path, "wb") as output:
+                        # A C200 playback relay can leave the TLS connection open
+                        # without sending a terminal event. Give the requested
+                        # segment enough time to arrive, plus a small startup /
+                        # tail allowance, so longer clips are not truncated.
+                        deadline = time.monotonic() + max(requested_seconds + 180, 180)
+                        while time.monotonic() < deadline:
+                            try:
+                                content_type, payload = self._recording_read_part(sock, buffer)
+                            except socket.timeout:
+                                if bytes_written:
+                                    break
+                                raise
+                            if "video/mp2t" in content_type:
+                                output.write(payload)
+                                bytes_written += len(payload)
+                                pts.update(payload)
+                                if progress:
+                                    elapsed = pts.seconds()
+                                    ratio = min(elapsed / requested_seconds, 1.0)
+                                    progress(
+                                        25 + round(ratio * 55),
+                                        "Downloading recording…",
+                                    )
+                                # Some C200 firmware closes the media part but
+                                # does not emit the playback_done JSON event.
+                                # Once media arrived, a short idle timeout is
+                                # enough to identify the end of the clip.
+                                sock.settimeout(3)
+                                if pts.seconds() >= requested_seconds + 1:
+                                    break
+                            elif "application/json" in content_type:
+                                text = payload.decode("latin-1", "replace")
+                                if "error_code" in text and '"error_code":0' not in text:
+                                    raise RuntimeError("camera refused the recording playback")
+                                if "playback_done" in text or "playfinished" in text:
+                                    break
+                finally:
+                    # The relay releases the camera's single playback slot when
+                    # it gets the stop frame. A failed download must not leave it
+                    # occupied for the next request.
+                    with contextlib.suppress(Exception):
+                        sock.sendall(
+                            self._recording_control_frame(
+                                f'{{"type":"request","seq":{sequence + 1},"params":{{"playback":{{"client_id":{client_id},"channels":[0,1]}},"method":"stop"}}}}'
+                            )
+                        )
+        if not bytes_written:
+            raise RuntimeError("recording relay returned no media")
+        if progress:
+            progress(82, "Preparing video…")
+        return bytes_written
 
     @staticmethod
     def _privacy_response(responses: list[dict], method: str) -> dict:

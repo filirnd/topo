@@ -23,6 +23,8 @@
 Topo is a standalone Linux and Windows desktop application for viewing and
 controlling Tapo cameras through the Tapo cloud account.
 
+Official website: [filirnd.github.io/topo](https://filirnd.github.io/topo/)
+
 It uses Tapo's cloud relay and does not require RTSP, port forwarding, a VPN,
 or direct access to the camera's home network. The application starts a local
 GTK/WebKit desktop window; no browser needs to be opened manually.
@@ -36,13 +38,14 @@ GTK/WebKit desktop window; no browser needs to be opened manually.
 |---|---|
 | **Connection** | Tapo cloud relay — no RTSP, port forwarding, VPN, or camera LAN access |
 | **Desktop shell** | GTK 3 + WebKitGTK 4.1 on Linux; Electron on Windows |
-| **Video pipeline** | Cloud relay decoded by FFmpeg and shown in the desktop UI |
+| **Media pipeline** | Cloud relay decoded by FFmpeg and shown in the desktop UI |
 | **Authentication** | Tapo account login with MFA and reusable session |
-| **Controls** | Privacy toggle, relay check, pan/tilt, and per-camera fullscreen |
+| **Controls** | Privacy toggle, relay check, pan/tilt, SD recordings, and per-camera fullscreen |
 
 ## Features
 
 - View multiple Tapo camera live streams in the same window.
+- Enable live audio independently for each camera with an explicit user click.
 - Cloud relay connection check for each camera.
 - Graphical Tapo account login.
 - MFA login through the Tapo app notification or email code.
@@ -61,6 +64,9 @@ GTK/WebKit desktop window; no browser needs to be opened manually.
 - Linux desktop launcher with the Topo icon.
 - Windows x64 NSIS installer with a desktop and Start Menu shortcut.
 - In-app Info button linking to the Topo project website.
+- SD-card recording calendar and 24-hour timeline with full clip playback.
+- Download individual SD-card recording clips as MP4 files.
+- Accessible recording-segment list for selecting clips that are close together.
 
 ## Tested cameras
 
@@ -70,15 +76,20 @@ The following model has been tested with Topo:
 |---|---:|---:|---:|
 | Tapo C200 | Yes | Yes | Yes |
 
+SD-card recording search and cloud playback have also been tested on two Tapo
+C200 cameras with local recordings available.
+
 More testers are welcome. If you use another Tapo camera model, please open an
 issue with the model name, firmware version, and which features work. Do not
 include account credentials, session tokens, or private camera footage.
 
 ## Current limitations
 
-- This version displays video only; audio is not currently implemented.
+- SD recordings include camera audio when the camera relay provides it.
+- Live audio requires an explicit click because desktop WebKit/WebView browsers
+  block autoplay with sound.
 - Desktop motion/event notifications are not currently implemented.
-- Recording and snapshots are not currently implemented.
+- Snapshots are not currently implemented.
 - Pan/tilt is available only for cameras supported by the Tapo cloud account.
 - A working Internet connection and an active Tapo account are required.
 
@@ -170,8 +181,8 @@ The Windows workflow also publishes the installer as a GitHub Release when a
 semantic version tag is pushed. For example:
 
 ```bash
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
 The workflow builds the installer, aligns the Windows app version with the

@@ -56,6 +56,17 @@ function createWindow(port) {
     },
   });
 
+  mainWindow.webContents.session.on('will-download', async (event, item) => {
+    const defaultPath = path.join(app.getPath('videos'), item.getFilename() || 'topo-recording.mp4');
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Topo recording',
+      defaultPath,
+      filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
+    });
+    if (result.canceled || !result.filePath) item.cancel();
+    else item.setSavePath(result.filePath);
+  });
+
   mainWindow.webContents.on('will-navigate', (event, uri) => {
     if (!uri.startsWith(`http://${LOCAL_HOST}:`)) {
       event.preventDefault();

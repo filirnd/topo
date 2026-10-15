@@ -149,7 +149,6 @@
             <li>Confirm the installation. The Topo repository is added automatically, so future updates appear through Flatpak.</li>
           </ol>
           <a class="button" href="io.github.filirnd.topo.flatpakref" download>Download .flatpakref</a>
-          <p style="margin-top: 18px;">Want to build the Windows installer locally from Linux? See the <a href="https://github.com/filirnd/topo/blob/main/windows/LOCAL_BUILD.md">local build guide</a>.</p>
         </div>
 
         <div class="install-panel" id="windows-panel" role="tabpanel" aria-labelledby="windows-tab" hidden>
@@ -161,7 +160,7 @@
             <li>Run it and launch Topo from the desktop or Start Menu.</li>
           </ol>
           <div class="notice"><strong>Windows SmartScreen notice.</strong> Topo is not code-signed by a Windows-trusted publisher yet. Windows may show an unknown-publisher warning; verify the official source, then choose <strong>More info → Run anyway</strong> if you trust it.</div>
-          <p style="margin-top: 18px;">Want to build it yourself? See the <a href="https://github.com/filirnd/topo/blob/main/windows/LOCAL_BUILD.md">local Windows build guide</a>.</p>
+          <p style="margin-top: 18px;">Want to build the Windows installer yourself from Linux or Windows? See the <a href="https://github.com/filirnd/topo/blob/main/windows/LOCAL_BUILD.md">local build guide</a>.</p>
         </div>
       </aside>
     </section>
@@ -174,14 +173,19 @@
       </div>
       <div class="feature-grid">
         <article class="feature"><div class="feature-icon">▦</div><h3>Multi-camera live view</h3><p>See multiple cloud camera streams in the same responsive dashboard, with per-camera loading, error, and retry states.</p></article>
-        <article class="feature"><div class="feature-icon">◉</div><h3>Privacy controls</h3><p>Enable or disable privacy mode for each camera and immediately reconnect its media relay after a state change.</p></article>
+        <article class="feature"><div class="feature-icon">◉</div><h3>Per-camera privacy</h3><p>Enable or disable privacy mode independently for each camera and reconnect its media relay after a state change.</p></article>
+        <article class="feature"><div class="feature-icon">◌</div><h3>Cloud relay check</h3><p>Check the cloud relay status for each camera when you need to verify its connection.</p></article>
         <article class="feature"><div class="feature-icon">↕</div><h3>Pan and tilt</h3><p>Move compatible cameras from a compact control panel with selectable movement steps.</p></article>
         <article class="feature"><div class="feature-icon">⛶</div><h3>Fullscreen viewing</h3><p>Open any camera fullscreen with a button or double-click, while keeping controls in a separate drawer.</p></article>
-        <article class="feature"><div class="feature-icon">▤</div><h3>SD recordings</h3><p>Browse the camera's SD-card timeline by local date and select complete recording segments, even when events are close together.</p></article>
-        <article class="feature"><div class="feature-icon">↓</div><h3>Clip downloads</h3><p>Play the complete selected clip and save the prepared MP4 through the native Linux or Windows save dialog.</p></article>
-        <article class="feature"><div class="feature-icon">⌁</div><h3>MFA and sessions</h3><p>Sign in with Tapo app or email verification, reuse a saved session, and log out when you want a fresh login.</p></article>
-        <article class="feature"><div class="feature-icon">▣</div><h3>Simple distribution</h3><p>Install through the signed Flatpak repository on Linux or download the Windows installer from GitHub Releases.</p></article>
+        <article class="feature"><div class="feature-icon">▤</div><h3>SD recording playback</h3><p>Browse the camera's SD-card timeline by local date and play complete recording segments, even when events are close together.</p></article>
+        <article class="feature"><div class="feature-icon">↓</div><h3>SD recording downloads</h3><p>Save a selected complete SD-card recording as an MP4 file through the native Linux or Windows save dialog.</p></article>
+        <article class="feature"><div class="feature-icon">⌁</div><h3>MFA login</h3><p>Complete MFA through a Tapo app notification or an email verification code.</p></article>
+        <article class="feature"><div class="feature-icon">◷</div><h3>Session reuse</h3><p>Reuse the saved Tapo session across launches, so MFA is not requested every time.</p></article>
+        <article class="feature"><div class="feature-icon">↪</div><h3>Logout support</h3><p>Clear the saved session and require a fresh login when you choose to log out.</p></article>
+        <article class="feature"><div class="feature-icon">↻</div><h3>Stream states</h3><p>See loading and error states for each stream and retry a camera connection when needed.</p></article>
+        <article class="feature"><div class="feature-icon">⌘</div><h3>Responsive layout</h3><p>Use the dashboard at different desktop window sizes without losing access to camera controls.</p></article>
       </div>
+      <p style="margin-top: 18px; color: var(--ink-soft);">Live audio can be enabled per camera after an explicit click, with an independent volume control for each live stream.</p>
     </section>
 
     <section class="split" aria-label="Compatibility and changelog">
@@ -191,6 +195,8 @@
         <p><strong>Tapo C200</strong> is currently the tested model.</p>
         <ul>
           <li>Live cloud video: supported</li>
+          <li>SD-card playback and MP4 download: supported</li>
+          <li>Live audio and volume control: supported</li>
           <li>Privacy mode: supported</li>
           <li>Pan and tilt: supported</li>
         </ul>
@@ -202,7 +208,7 @@
         <h2>Latest changelog</h2>
         <div class="release">
           <div class="release-title"><strong>0.1.4</strong><time datetime="2026-10-15">15 Oct 2026</time></div>
-          <p>Added complete SD-card clip playback and MP4 downloads, native save dialogs, and a compact newest-first recording list.</p>
+          <p>Added complete SD-card clip playback and MP4 downloads, per-camera live audio volume control, native save dialogs, and a compact newest-first recording list.</p>
         </div>
         <div class="release">
           <div class="release-title"><strong>0.1.3</strong><time datetime="2026-10-14">14 Oct 2026</time></div>

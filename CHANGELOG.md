@@ -17,6 +17,7 @@ No changes yet.
 - A readable recording-segment list with larger click targets for dense timelines.
 - Native save dialogs for recording downloads on Linux and Windows.
 - Per-camera live audio through the cloud relay, enabled by an explicit audio button.
+- Per-camera live audio volume control.
 - Camera-local timezone handling for recording dates and clip times.
 
 ### Fixed

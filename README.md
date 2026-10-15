@@ -198,9 +198,7 @@ Topo can also be distributed through a self-hosted Flatpak repository on
 GitHub Pages. This provides a clickable `.flatpakref` installer and normal
 Flatpak updates without requiring a Flathub submission.
 
-The repository is published automatically by GitHub Actions after the
-repository signing key and GitHub Pages have been configured. The public
-installation link is:
+The public installation link is:
 
 ```text
 https://filirnd.github.io/topo/io.github.filirnd.topo.flatpakref
@@ -222,28 +220,6 @@ flatpak update --user
 
 The Flatpak package is cloud-only and needs network access, but it does not
 need RTSP, Tailscale, a Raspberry Pi, or access to the home LAN.
-
-### Maintainer setup
-
-To publish the repository from GitHub Actions:
-
-1. Generate a dedicated GPG signing key and keep its private key out of Git:
-
-   ```bash
-   gpg --quick-gen-key "Topo Flatpak Repository" ed25519 sign 0
-   gpg --armor --export-secret-keys <fingerprint> > topo-flatpak-private.asc
-   ```
-
-2. Add the contents of `topo-flatpak-private.asc` as the repository secret
-   `GPG_PRIVATE_KEY`. Add the key passphrase as `GPG_PASSPHRASE` if the key is
-   protected by one.
-3. In the repository settings, enable **Pages** with **GitHub Actions** as the
-   source.
-4. Push to `main` or run the **Flatpak repository** workflow manually.
-
-The workflow signs the repository, publishes the Flatpak metadata and creates
-the clickable `.flatpakref` installer. Rotate the GPG key only with a planned
-repository migration, because installed clients trust the repository key.
 
 ## Login and session storage
 

@@ -40,6 +40,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.5" date="2026-10-21">
+      <description>
+        <p>Reduced live-preview latency and made low-latency playback the default live experience.</p>
+      </description>
+    </release>
     <release version="0.1.4" date="2026-10-15">
       <description>
         <p>Added full SD-card clip playback and MP4 downloads, per-camera live audio volume control, native save dialogs, and a compact newest-first recording list.</p>

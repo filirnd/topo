@@ -1,6 +1,6 @@
 {
   "name": "topo-windows",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Topo - desktop app for Tapo camera",
   "private": true,
   "main": "main.js",

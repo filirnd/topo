@@ -2,27 +2,17 @@
 
 All notable changes to Topo are documented here.
 
-## Unreleased
+## [0.1.5] - 2026-10-21
 
 ### Added
 
-- Low-latency fragmented-MP4 live playback as the default and only live video
-  mode in the desktop interface.
-- Automatic low-latency playback when the camera grid opens, without a mode
-  switch button or a separate player window.
-- Frame-level live MP4 fragments to reduce browser buffering and keep the
-  preview closer to the camera's live edge.
-- Recovery of the Linux WebKit interface after a renderer process terminates.
+- Low-latency live playback enabled by default for supported cameras.
 
-### Fixed
+### Improved
 
-- Delivered the fragmented-MP4 initialization segment to every new live
-  subscriber, preventing the player from waiting indefinitely for a stream.
-- Improved live-stream error and retry handling for cameras that are offline
-  or temporarily unavailable.
-- Reduced the extra delay introduced by keyframe-only MP4 fragments.
-- Kept the integrated player and bundled FFmpeg runtime aligned in local Linux
-  and Windows builds.
+- Reduced live-preview delay and improved stream startup reliability.
+- Improved handling of temporarily unavailable cameras and stream retries.
+- Added automatic recovery when the Linux interface process stops responding.
 
 ## [0.1.4] - 2026-10-15
 

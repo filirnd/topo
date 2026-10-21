@@ -26,3 +26,5 @@ windows/dist/
 windows/out/
 windows/.pyinstaller-build/
 windows/.pyinstaller-spec/
+experiments/native-ffmpeg-player/native-ffmpeg-player
+experiments/native-ffmpeg-player/native-ffmpeg-player.exe

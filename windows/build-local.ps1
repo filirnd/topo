@@ -53,7 +53,8 @@ $outDir = Join-Path $scriptDir 'out'
 New-Item -ItemType Directory -Force -Path $distDir, $outDir | Out-Null
 
 $ffmpegPath = Join-Path $distDir 'ffmpeg.exe'
-if (-not (Test-Path $ffmpegPath)) {
+$ffplayPath = Join-Path $distDir 'ffplay.exe'
+if (-not (Test-Path $ffmpegPath) -or -not (Test-Path $ffplayPath)) {
   $temporaryDir = Join-Path ([System.IO.Path]::GetTempPath()) ("topo-ffmpeg-" + [guid]::NewGuid().ToString('N'))
   $archive = Join-Path $temporaryDir 'ffmpeg.zip'
   $extractDir = Join-Path $temporaryDir 'extract'
@@ -63,10 +64,18 @@ if (-not (Test-Path $ffmpegPath)) {
     Invoke-WebRequest -Uri $ffmpegUrl -OutFile $archive
     Expand-Archive -Path $archive -DestinationPath $extractDir -Force
     $binary = Get-ChildItem -Path $extractDir -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+    $nativePlayer = Get-ChildItem -Path $extractDir -Filter ffplay.exe -Recurse | Select-Object -First 1
     if (-not $binary) {
       throw 'FFmpeg executable was not found in the downloaded archive.'
     }
+    if (-not $nativePlayer) {
+      throw 'FFplay executable was not found in the downloaded archive.'
+    }
     Copy-Item $binary.FullName $ffmpegPath -Force
+    Copy-Item $nativePlayer.FullName $ffplayPath -Force
+    Get-ChildItem -Path $nativePlayer.Directory.FullName -Filter '*.dll' | ForEach-Object {
+      Copy-Item $_.FullName $distDir -Force
+    }
   } finally {
     if (Test-Path $temporaryDir) {
       Remove-Item $temporaryDir -Recurse -Force -ErrorAction SilentlyContinue

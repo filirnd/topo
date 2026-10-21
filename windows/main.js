@@ -18,6 +18,7 @@ function backendCommand() {
       args: [],
       cwd: process.resourcesPath,
       ffmpeg: path.join(process.resourcesPath, 'backend', 'ffmpeg.exe'),
+      nativePlayer: path.join(process.resourcesPath, 'backend', 'ffplay.exe'),
     };
   }
 
@@ -27,6 +28,7 @@ function backendCommand() {
     args: [path.join(projectRoot, 'tapo_cloud_app.py')],
     cwd: projectRoot,
     ffmpeg: process.env.TOPO_FFMPEG || 'ffmpeg',
+    nativePlayer: process.env.TOPO_NATIVE_PLAYER || path.join(projectRoot, 'windows', 'dist', 'ffplay.exe'),
   };
 }
 
@@ -109,6 +111,7 @@ function startBackend() {
   const environment = {
     ...process.env,
     TOPO_FFMPEG: runtime.ffmpeg,
+    TOPO_NATIVE_PLAYER: runtime.nativePlayer,
     PYTHONUNBUFFERED: '1',
   };
   backend = spawn(runtime.command, [...runtime.args, '--host', LOCAL_HOST, '--port', '0'], {

@@ -5,8 +5,9 @@ The browser talks only to this local UI. The Python process talks to Tapo's
 cloud API and keeps the cloud token server-side; it never connects to a home
 LAN address, RTSP endpoint, Raspberry Pi, or Tailscale.
 
-The app opens Tapo's CIPC cloud relay and converts the MPEG-TS live stream to
-MJPEG for the local browser. It never connects to a camera LAN address.
+The app opens Tapo's CIPC cloud relay and exposes both a browser-compatible
+MJPEG path and a low-latency fragmented-MP4 path for the local browser. It
+never connects to a camera LAN address.
 """
 
 from __future__ import annotations
@@ -48,6 +49,67 @@ ICON_PATH = ROOT / "tapo-cloud-viewer.png"
 if not ICON_PATH.exists():
     ICON_PATH = ROOT / "io.github.filirnd.topo.png"
 PRODUCT_NAME = "Topo - desktop app for Tapo camera"
+STREAM_START_TIMEOUT = 12.0
+STREAM_RESOLUTION = os.environ.get("TOPO_STREAM_RESOLUTION", "HD").strip().upper()
+if STREAM_RESOLUTION not in {"HD", "SD"}:
+    STREAM_RESOLUTION = "HD"
+
+
+def native_player_path() -> Path | None:
+    """Return the bundled native decoder, when this build includes one."""
+    override = os.environ.get("TOPO_NATIVE_PLAYER")
+    candidates = [Path(override)] if override else []
+    candidates.extend(
+        [
+            ROOT / ("native-ffmpeg-player.exe" if os.name == "nt" else "native-ffmpeg-player"),
+            ROOT / ("ffplay.exe" if os.name == "nt" else "ffplay"),
+            ROOT / "experiments" / "native-ffmpeg-player" / (
+                "native-ffmpeg-player.exe" if os.name == "nt" else "native-ffmpeg-player"
+            ),
+        ]
+    )
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return candidate
+    system_ffplay = shutil.which("ffplay")
+    if system_ffplay:
+        return Path(system_ffplay)
+    return None
+
+
+def ffmpeg_command_available() -> bool:
+    command = os.environ.get("TOPO_FFMPEG") or "ffmpeg"
+    return Path(command).is_file() or shutil.which(command) is not None
+
+
+def native_player_command(player_path: Path, title: str) -> list[str]:
+    """Build the stdin MPEG-TS command for the bundled player or ffplay."""
+    window_title = f"Topo - low-latency player - {title}"
+    if player_path.name.lower() in {"ffplay", "ffplay.exe"}:
+        return [
+            str(player_path),
+            "-window_title",
+            window_title,
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-framedrop",
+            "-sync",
+            "video",
+            "-probesize",
+            "32768",
+            "-analyzeduration",
+            "0",
+            "-f",
+            "mpegts",
+            "-i",
+            "pipe:0",
+        ]
+    return [str(player_path), "--title", window_title]
 
 
 class _MulawTsExtractor:
@@ -124,6 +186,7 @@ class CloudMediaWorker:
         self.device = device
         self.subscribers: set[queue.Queue[bytes]] = set()
         self.audio_subscribers: set[queue.Queue[bytes]] = set()
+        self.native_video_subscribers: set[queue.Queue[bytes]] = set()
         self.lock = threading.Lock()
         self.wake = threading.Event()
         self.stop = threading.Event()
@@ -131,6 +194,13 @@ class CloudMediaWorker:
             target=self._run, name=f"tapo-camera-{device.get('deviceId', '')[:8]}", daemon=True
         )
         self.last_error = ""
+        self.native_lock = threading.RLock()
+        self.relay_lock = threading.Lock()
+        self.relay_socket: ssl.SSLSocket | None = None
+        self.native_requested = False
+        self.native_process: subprocess.Popen | None = None
+        self.native_video_running = False
+        self.native_init_segment = b""
         self.thread.start()
 
     def subscribe(self) -> queue.Queue[bytes]:
@@ -155,9 +225,133 @@ class CloudMediaWorker:
         with self.lock:
             self.audio_subscribers.discard(subscriber)
 
+    def subscribe_native_video(self) -> queue.Queue[bytes]:
+        subscriber: queue.Queue[bytes] = queue.Queue()
+        with self.lock:
+            self.native_video_subscribers.add(subscriber)
+            native_video_running = self.native_video_running
+            init_segment = self.native_init_segment
+            if not native_video_running:
+                # A fresh remuxer must produce a new init segment. Do not give
+                # a new subscriber an init header belonging to an old relay.
+                self.native_init_segment = b""
+                init_segment = b""
+        if init_segment:
+            subscriber.put_nowait(init_segment)
+        self.last_error = ""
+        # The remuxer needs the beginning of a fresh MPEG-TS stream so it can
+        # copy the H.264 configuration into the fragmented MP4 init segment.
+        if not native_video_running:
+            self._interrupt_relay()
+        self.wake.set()
+        return subscriber
+
+    def unsubscribe_native_video(self, subscriber: queue.Queue[bytes]) -> None:
+        with self.lock:
+            self.native_video_subscribers.discard(subscriber)
+
+    def start_native_player(self) -> dict:
+        player_path = native_player_path()
+        if player_path is None:
+            raise RuntimeError("native FFmpeg player is not installed in this build")
+        with self.native_lock:
+            if self.native_process is not None and self.native_process.poll() is None:
+                self.native_requested = True
+                return self.native_player_status()
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            process = subprocess.Popen(
+                native_player_command(
+                    player_path,
+                    str(self.device.get("alias") or self.device.get("deviceName") or "Topo camera"),
+                ),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+                creationflags=creationflags,
+            )
+            self.native_process = process
+            self.native_requested = True
+            threading.Thread(
+                target=self._read_native_output,
+                args=(process,),
+                name="tapo-native-player-log",
+                daemon=True,
+            ).start()
+        # A native MPEG-TS decoder must see the beginning of a fresh stream
+        # (PAT/PMT). If the browser relay is already running, interrupt it so
+        # the worker reconnects and sends the complete stream to both outputs.
+        self._interrupt_relay()
+        self.wake.set()
+        return self.native_player_status()
+
+    def _interrupt_relay(self) -> None:
+        with self.relay_lock:
+            relay_socket = self.relay_socket
+        if relay_socket is None:
+            return
+        with contextlib.suppress(OSError):
+            relay_socket.shutdown(socket.SHUT_RDWR)
+        with contextlib.suppress(OSError):
+            relay_socket.close()
+
+    @staticmethod
+    def _read_native_output(process: subprocess.Popen) -> None:
+        """Drain native-player diagnostics so a full pipe cannot stall it."""
+        if process.stdout is None:
+            return
+        try:
+            for raw_line in iter(process.stdout.readline, b""):
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if line:
+                    print(f"[native-player] {line}", flush=True)
+        except (OSError, ValueError):
+            pass
+
+    def stop_native_player(self) -> dict:
+        with self.native_lock:
+            process = self.native_process
+            self.native_process = None
+            self.native_requested = False
+        self._terminate_native_process(process)
+        self.wake.set()
+        return {"active": False, "available": native_player_path() is not None}
+
+    def native_player_status(self) -> dict:
+        with self.native_lock:
+            process = self.native_process
+            if process is not None and process.poll() is not None:
+                self.native_process = None
+                self.native_requested = False
+                process = None
+            active = bool(self.native_requested and process is not None)
+        return {"active": active, "available": native_player_path() is not None}
+
+    @staticmethod
+    def _terminate_native_process(process: subprocess.Popen | None) -> None:
+        if process is None or process.poll() is not None:
+            return
+        if process.stdin is not None:
+            with contextlib.suppress(OSError):
+                process.stdin.close()
+        with contextlib.suppress(OSError):
+            process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=2)
+
     def close(self) -> None:
         self.stop.set()
         self.wake.set()
+        with self.native_lock:
+            native_process = self.native_process
+            self.native_process = None
+            self.native_requested = False
+        self._terminate_native_process(native_process)
         if self.thread.is_alive():
             self.thread.join(timeout=3)
 
@@ -193,11 +387,33 @@ class CloudMediaWorker:
                 except queue.Full:
                     pass
 
+    def _broadcast_native_video(self, chunk: bytes) -> None:
+        with self.lock:
+            subscribers = tuple(self.native_video_subscribers)
+        for subscriber in subscribers:
+            try:
+                subscriber.put_nowait(chunk)
+            except queue.Full:
+                # Keep the newest MP4 fragment; an old fragment is not useful
+                # for a live player that is already behind real time.
+                try:
+                    subscriber.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    subscriber.put_nowait(chunk)
+                except queue.Full:
+                    pass
+
     def _run(self) -> None:
         while not self.stop.is_set():
             with self.lock:
-                has_subscribers = bool(self.subscribers or self.audio_subscribers)
-            if not has_subscribers:
+                has_subscribers = bool(
+                    self.subscribers or self.audio_subscribers or self.native_video_subscribers
+                )
+            with self.native_lock:
+                has_native_player = bool(self.native_requested and self.native_process)
+            if not has_subscribers and not has_native_player:
                 self.wake.wait(timeout=1)
                 self.wake.clear()
                 continue
@@ -228,7 +444,7 @@ class CloudMediaWorker:
             "rootCaVer": "1",
             "streamType": 0,
             "preConnection": 0,
-            "resolution": "HD",
+            "resolution": STREAM_RESOLUTION,
         }
         response = self.client.post_cipc("/v2/relay/request", request_param, player_id)
         relay_info = result_of(response)
@@ -278,12 +494,21 @@ class CloudMediaWorker:
         jpeg_thread = None
         audio_ffmpeg = None
         audio_thread = None
+        native_video_ffmpeg = None
+        native_video_thread = None
         audio_extractor = _MulawTsExtractor()
+        with self.lock:
+            needs_video_decoder = bool(self.subscribers)
+            needs_audio_decoder = bool(self.audio_subscribers)
+            needs_native_video = bool(self.native_video_subscribers)
+        native_process = None
         try:
             with socket.create_connection((host, parsed.port or 443), timeout=15) as plain_socket:
                 with self.client.verify_context.wrap_socket(
                     plain_socket, server_hostname=host
                 ) as tls_socket:
+                    with self.relay_lock:
+                        self.relay_socket = tls_socket
                     # Do not leave the UI stuck on a half-open relay that
                     # answered HTTP but never attached its media producer.
                     # The standalone probe can need several seconds between
@@ -294,12 +519,21 @@ class CloudMediaWorker:
                     tls_socket.sendall(raw_request)
                     buffer = bytearray()
                     self._read_http_headers(tls_socket, buffer)
-                    ffmpeg = subprocess.Popen(
-                        [
+                    if needs_video_decoder or needs_audio_decoder:
+                        ffmpeg = subprocess.Popen(
+                            [
                             self.client_ffmpeg,
                             "-hide_banner",
                             "-loglevel",
                             "error",
+                            # Keep the live MPEG-TS path close to the newest
+                            # packet. The mobile app uses a native low-latency
+                            # player; without these flags FFmpeg may retain a
+                            # small input buffer before emitting frames.
+                            "-fflags",
+                            "nobuffer",
+                            "-flags",
+                            "low_delay",
                             # MPEG-TS is a live pipe. The default FFmpeg
                             # probe waits for EOF before emitting frames;
                             # bound probing so JPEGs are produced while the
@@ -322,21 +556,78 @@ class CloudMediaWorker:
                             "-vcodec",
                             "mjpeg",
                             "pipe:1",
-                        ],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                        bufsize=0,
-                    )
-                    jpeg_thread = threading.Thread(
-                        target=self._read_jpegs,
-                        args=(ffmpeg,),
-                        name="tapo-jpeg-reader",
-                        daemon=True,
-                    )
-                    jpeg_thread.start()
-                    if self._has_audio_subscribers():
-                        audio_ffmpeg, audio_thread = self._start_audio_encoder()
+                            ],
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL,
+                            bufsize=0,
+                        )
+                        if needs_video_decoder:
+                            jpeg_thread = threading.Thread(
+                                target=self._read_jpegs,
+                                args=(ffmpeg,),
+                                name="tapo-jpeg-reader",
+                                daemon=True,
+                            )
+                            jpeg_thread.start()
+                        if needs_audio_decoder:
+                            audio_ffmpeg, audio_thread = self._start_audio_encoder()
+                    if needs_native_video:
+                        with self.lock:
+                            self.native_video_running = True
+                            self.native_init_segment = b""
+                        native_video_ffmpeg = subprocess.Popen(
+                            [
+                                self.client_ffmpeg,
+                                "-hide_banner",
+                                "-loglevel",
+                                "error",
+                                "-fflags",
+                                "nobuffer",
+                                "-flags",
+                                "low_delay",
+                                "-analyzeduration",
+                                "0",
+                                "-probesize",
+                                "32768",
+                                "-f",
+                                "mpegts",
+                                "-i",
+                                "pipe:0",
+                                "-map",
+                                "0:v:0",
+                                "-c:v",
+                                "copy",
+                                "-an",
+                                "-flush_packets",
+                                "1",
+                                "-muxdelay",
+                                "0",
+                                "-muxpreload",
+                                "0",
+                                "-movflags",
+                                # Flush every encoded frame instead of waiting
+                                # for the camera's next keyframe. The C200 GOP
+                                # is roughly two seconds; keyframe-only MP4
+                                # fragments therefore make a browser player
+                                # sit about two seconds behind the live edge.
+                                "+empty_moov+default_base_moof+frag_every_frame",
+                                "-f",
+                                "mp4",
+                                "pipe:1",
+                            ],
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL,
+                            bufsize=0,
+                        )
+                        native_video_thread = threading.Thread(
+                            target=self._read_native_video,
+                            args=(native_video_ffmpeg,),
+                            name="tapo-native-video-reader",
+                            daemon=True,
+                        )
+                        native_video_thread.start()
                     tls_socket.settimeout(20)
                     while not self.stop.is_set():
                         boundary = self._read_line(tls_socket, buffer)
@@ -367,24 +658,49 @@ class CloudMediaWorker:
                         # MPEG-TS video stream. The length and encryption flag
                         # are the reliable framing signals here.
                         is_video = length > 0
+                        # The native player can be opened after this relay has
+                        # already started for the browser preview. Resolve it
+                        # for every part so the new player joins the existing
+                        # live session instead of waiting for a reconnect.
+                        with self.native_lock:
+                            current_native_process = (
+                                self.native_process
+                                if self.native_requested
+                                else None
+                            )
+                        if current_native_process is not None and current_native_process.poll() is not None:
+                            self.native_player_status()
+                            current_native_process = None
+                        native_process = current_native_process
+                        outputs = []
+                        if is_video and ffmpeg is not None and ffmpeg.stdin is not None:
+                            outputs.append(ffmpeg.stdin)
                         if (
                             is_video
-                            and audio_ffmpeg is None
-                            and self._has_audio_subscribers()
+                            and native_video_ffmpeg is not None
+                            and native_video_ffmpeg.stdin is not None
                         ):
-                            audio_ffmpeg, audio_thread = self._start_audio_encoder()
-                        if is_video and ffmpeg.stdin is not None:
+                            outputs.append(native_video_ffmpeg.stdin)
+                        if is_video and current_native_process is not None and current_native_process.stdin is not None:
+                            outputs.append(native_process.stdin)
+                        if is_video and outputs:
                             self._pipe_exact(
                                 tls_socket,
                                 buffer,
                                 length,
-                                ffmpeg.stdin,
+                                outputs,
                                 audio_extractor,
                                 audio_ffmpeg,
                             )
                         else:
                             self._read_exact(tls_socket, buffer, length)
+                    with self.relay_lock:
+                        if self.relay_socket is tls_socket:
+                            self.relay_socket = None
         finally:
+            with self.relay_lock:
+                if self.relay_socket is not None and self.relay_socket.fileno() < 0:
+                    self.relay_socket = None
             if ffmpeg is not None and ffmpeg.stdin is not None:
                 try:
                     ffmpeg.stdin.close()
@@ -398,6 +714,24 @@ class CloudMediaWorker:
                     ffmpeg.kill()
                 if jpeg_thread is not None:
                     jpeg_thread.join(timeout=2)
+            if native_video_ffmpeg is not None and native_video_ffmpeg.stdin is not None:
+                try:
+                    native_video_ffmpeg.stdin.close()
+                except OSError:
+                    pass
+            if native_video_ffmpeg is not None:
+                try:
+                    native_video_ffmpeg.terminate()
+                    native_video_ffmpeg.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    native_video_ffmpeg.kill()
+                if native_video_thread is not None:
+                    native_video_thread.join(timeout=2)
+            if native_video_ffmpeg is not None:
+                with self.lock:
+                    self.native_video_running = False
+            if native_process is not None and native_process.poll() is not None:
+                self.native_player_status()
             if audio_ffmpeg is not None and audio_ffmpeg.stdin is not None:
                 try:
                     audio_ffmpeg.stdin.close()
@@ -506,7 +840,7 @@ class CloudMediaWorker:
         sock: ssl.SSLSocket,
         buffer: bytearray,
         length: int,
-        output,
+        outputs: list,
         audio_extractor: _MulawTsExtractor | None = None,
         audio_ffmpeg: subprocess.Popen | None = None,
     ) -> None:
@@ -519,8 +853,13 @@ class CloudMediaWorker:
                     raise EOFError("relay closed during a video packet")
                 buffer.extend(chunk)
             amount = min(remaining, len(buffer))
-            output.write(bytes(buffer[:amount]))
-            output.flush()
+            chunk = bytes(buffer[:amount])
+            for output in outputs:
+                try:
+                    output.write(chunk)
+                    output.flush()
+                except (BrokenPipeError, OSError) as exc:
+                    raise BrokenPipeError("native or browser media player closed") from exc
             if audio_extractor is not None and audio_ffmpeg is not None:
                 audio = audio_extractor.feed(bytes(buffer[:amount]))
                 if audio and audio_ffmpeg.stdin is not None and audio_ffmpeg.poll() is None:
@@ -556,6 +895,30 @@ class CloudMediaWorker:
                 frame = bytes(buffer[start : end + 2])
                 del buffer[: end + 2]
                 self._broadcast(frame)
+
+    def _read_native_video(self, ffmpeg: subprocess.Popen) -> None:
+        if ffmpeg.stdout is None:
+            return
+        read1 = getattr(ffmpeg.stdout, "read1", ffmpeg.stdout.read)
+        init_buffer = bytearray()
+        init_segment_saved = False
+        while True:
+            chunk = read1(16384)
+            if not chunk:
+                return
+            if not init_segment_saved:
+                init_buffer.extend(chunk)
+                # The fragmented MP4 stream starts with ftyp + moov and then
+                # the first moof. Cache the bytes before that first moof so a
+                # browser subscribing after remuxer startup can still receive
+                # a complete Media Source initialization segment.
+                moof = init_buffer.find(b"moof")
+                if moof >= 4:
+                    init_segment = bytes(init_buffer[: moof - 4])
+                    with self.lock:
+                        self.native_init_segment = init_segment
+                    init_segment_saved = True
+            self._broadcast_native_video(chunk)
 
     def _read_audio(self, ffmpeg: subprocess.Popen) -> None:
         if ffmpeg.stdout is None:
@@ -615,6 +978,22 @@ class CloudAppState:
             worker = self.workers.pop(index, None)
         if worker is not None:
             worker.close()
+
+    def native_player(self, index: int, enabled: bool) -> dict:
+        if enabled:
+            return self.worker(index).start_native_player()
+        with self.workers_lock:
+            worker = self.workers.get(index)
+        if worker is None:
+            return {"active": False, "available": native_player_path() is not None}
+        return worker.stop_native_player()
+
+    def native_player_status(self, index: int) -> dict:
+        with self.workers_lock:
+            worker = self.workers.get(index)
+        if worker is None:
+            return {"active": False, "available": native_player_path() is not None}
+        return worker.native_player_status()
 
     def privacy_state(self, index: int) -> tuple[bool | None, str]:
         now = time.monotonic()
@@ -928,6 +1307,7 @@ class CloudAppState:
             "privacy_error": privacy_error,
             "ptz": ptz,
             "ptz_error": ptz_error,
+            "native_available": ffmpeg_command_available(),
         }
 
     def public_cameras(self) -> list[dict]:
@@ -1137,12 +1517,32 @@ class Handler(BaseHTTPRequestHandler):
         worker = state.worker(index)
         subscriber = worker.subscribe()
         try:
+            # Do not expose an HTTP 200 multipart stream until the camera has
+            # produced a real JPEG. An offline camera can otherwise leave the
+            # browser attached to an endless, empty MJPEG response. WebKitGTK
+            # handles that state poorly and may terminate the whole web
+            # process instead of reporting an image error.
+            deadline = time.monotonic() + STREAM_START_TIMEOUT
+            first_frame = None
+            while first_frame is None:
+                if self.context.current_state() is not state:
+                    raise ConnectionError("session ended")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("camera did not provide a video frame")
+                try:
+                    first_frame = subscriber.get(timeout=min(1.0, remaining))
+                except queue.Empty:
+                    if worker.last_error:
+                        raise RuntimeError(worker.last_error)
+
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.send_header("Pragma", "no-cache")
             self.send_header("Connection", "close")
             self.end_headers()
+            self._write_mjpeg_frame(first_frame)
             while True:
                 if self.context.current_state() is not state:
                     raise ConnectionError("session ended")
@@ -1152,18 +1552,81 @@ class Handler(BaseHTTPRequestHandler):
                     if worker.last_error:
                         raise ConnectionError(worker.last_error)
                     continue
-                self.wfile.write(
-                    b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
-                    + str(len(frame)).encode("ascii")
-                    + b"\r\n\r\n"
-                    + frame
-                    + b"\r\n"
-                )
-                self.wfile.flush()
+                self._write_mjpeg_frame(frame)
+        except (TimeoutError, RuntimeError) as exc:
+            self._send_stream_unavailable(str(exc))
         except (BrokenPipeError, ConnectionResetError, ConnectionError, OSError):
             pass
         finally:
             worker.unsubscribe(subscriber)
+
+    def stream_native_video(self, state: CloudAppState, index: int) -> None:
+        worker = state.worker(index)
+        subscriber = worker.subscribe_native_video()
+        try:
+            deadline = time.monotonic() + max(STREAM_START_TIMEOUT, 30.0)
+            first_chunk = None
+            while first_chunk is None:
+                if self.context.current_state() is not state:
+                    raise ConnectionError("session ended")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("camera did not provide a low-latency video stream")
+                try:
+                    first_chunk = subscriber.get(timeout=min(1.0, remaining))
+                except queue.Empty:
+                    # Opening low-latency mode intentionally interrupts an
+                    # existing browser relay. Its first EOF is transient;
+                    # wait for the worker to establish the fresh relay.
+                    continue
+
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(first_chunk)
+            self.wfile.flush()
+            while True:
+                if self.context.current_state() is not state:
+                    raise ConnectionError("session ended")
+                try:
+                    chunk = subscriber.get(timeout=20)
+                except queue.Empty:
+                    if worker.last_error:
+                        raise ConnectionError(worker.last_error)
+                    continue
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (TimeoutError, RuntimeError) as exc:
+            self._send_stream_unavailable(str(exc))
+        except (BrokenPipeError, ConnectionResetError, ConnectionError, OSError):
+            pass
+        finally:
+            worker.unsubscribe_native_video(subscriber)
+
+    def _write_mjpeg_frame(self, frame: bytes) -> None:
+        self.wfile.write(
+            b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+            + str(len(frame)).encode("ascii")
+            + b"\r\n\r\n"
+            + frame
+            + b"\r\n"
+        )
+        self.wfile.flush()
+
+    def _send_stream_unavailable(self, message: str) -> None:
+        body = (message or "camera stream unavailable").encode("utf-8", "replace")
+        try:
+            self.send_response(503)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def stream_audio(self, state: CloudAppState, index: int) -> None:
         worker = state.worker(index)
@@ -1243,6 +1706,17 @@ class Handler(BaseHTTPRequestHandler):
         if request_path.startswith("/api/cameras/"):
             recordings_prefix = "/api/cameras/"
             recordings_parts = request_path[len(recordings_prefix) :].strip("/").split("/")
+            if len(recordings_parts) == 2 and recordings_parts[1] == "native-player":
+                state = self.require_state()
+                if state is None:
+                    return
+                try:
+                    index = int(recordings_parts[0])
+                    state.devices[index]
+                    self.send_json({"ok": True, **state.native_player_status(index)})
+                except (ValueError, IndexError) as exc:
+                    self.send_json({"ok": False, "error": str(exc)}, 400)
+                return
             if len(recordings_parts) == 3 and recordings_parts[1] == "recordings" and recordings_parts[2] == "dates":
                 state = self.require_state()
                 if state is None:
@@ -1301,6 +1775,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": False, "error": "invalid camera"}, 404)
                 return
             self.stream_mjpeg(state, index)
+            return
+        if request_path.startswith("/stream/") and request_path.endswith(".mp4"):
+            state = self.require_state()
+            if state is None:
+                return
+            raw_index = request_path[len("/stream/") : -len(".mp4")].strip("/")
+            try:
+                index = int(raw_index)
+                state.devices[index]
+            except (ValueError, IndexError):
+                self.send_json({"ok": False, "error": "invalid camera"}, 404)
+                return
+            self.stream_native_video(state, index)
             return
         if request_path.startswith("/audio/") and request_path.endswith(".mp3"):
             state = self.require_state()
@@ -1400,7 +1887,10 @@ class Handler(BaseHTTPRequestHandler):
             except (RuntimeError, OSError) as exc:
                 self.send_json({"ok": False, "error": str(exc)}, 502)
             return
-        if request_path.endswith("/privacy"):
+        if request_path.endswith("/native-player"):
+            suffix = "/native-player"
+            action = "native-player"
+        elif request_path.endswith("/privacy"):
             suffix = "/privacy"
             action = "privacy"
         elif request_path.endswith("/move"):
@@ -1415,6 +1905,10 @@ class Handler(BaseHTTPRequestHandler):
             state.devices[index]
             payload = self.read_json_body()
             if action == "privacy":
+                enabled = payload.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be a boolean")
+            elif action == "native-player":
                 enabled = payload.get("enabled")
                 if not isinstance(enabled, bool):
                     raise ValueError("enabled must be a boolean")
@@ -1437,6 +1931,8 @@ class Handler(BaseHTTPRequestHandler):
             if action == "privacy":
                 privacy = state.set_privacy(index, enabled)
                 self.send_json({"ok": True, "privacy": privacy})
+            elif action == "native-player":
+                self.send_json({"ok": True, **state.native_player(index, enabled)})
             else:
                 state.move_camera(index, x, y)
                 self.send_json({"ok": True, "x": x, "y": y})

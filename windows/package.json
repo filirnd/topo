@@ -24,12 +24,14 @@
     ],
     "extraResources": [
       {
-        "from": "dist/tapo-backend.exe",
-        "to": "backend/tapo-backend.exe"
-      },
-      {
-        "from": "dist/ffmpeg.exe",
-        "to": "backend/ffmpeg.exe"
+        "from": "dist",
+        "to": "backend",
+        "filter": [
+          "tapo-backend.exe",
+          "ffmpeg.exe",
+          "ffplay.exe",
+          "*.dll"
+        ]
       },
       {
         "from": "../data/io.github.filirnd.topo.png",

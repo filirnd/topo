@@ -28,6 +28,8 @@ import platform
 import re
 import socket
 import ssl
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -1537,6 +1539,214 @@ class TapoCloud:
                 f"hex={body[:24].hex()}"
             )
 
+    def play_cipc_native(
+        self,
+        base_url: str,
+        device: dict,
+        *,
+        duration: int = 60,
+        resolution: str = "HD",
+    ) -> None:
+        """Play relay MPEG-TS directly with ffplay, without transcoding.
+
+        This is intentionally a probe-only diagnostic.  Topo still uses its
+        normal MJPEG browser-compatible path.  The relay multipart envelope is
+        removed here, but each media part is passed to ffplay unchanged.
+        """
+        native_player = os.environ.get("TOPO_NATIVE_PLAYER") or shutil.which("ffplay")
+        if not native_player:
+            raise RuntimeError("ffplay is not installed and TOPO_NATIVE_PLAYER is not set")
+        device_id = str(device.get("deviceId") or "")
+        if not device_id:
+            raise RuntimeError("camera does not contain a deviceId")
+        self.discover_cipc_url(base_url)
+        player_id = str(uuid.uuid4())
+        self.last_cipc_player_id = player_id
+        request_param = {
+            "deviceId": device_id,
+            "dataTimeoutCount": 0,
+            "cloudType": 2,
+            "deviceType": device.get("deviceType") or "SMART.IPCAMERA",
+            "playerId": player_id,
+            "rootCaVer": "1",
+            "streamType": 0,
+            "preConnection": 0,
+            "resolution": resolution,
+        }
+        response = self.post_cipc("/v2/relay/request", request_param, player_id)
+        relay_info = response.get("result") if isinstance(response.get("result"), dict) else {}
+        if error_code(response) != 0 or not isinstance(relay_info, dict):
+            raise RuntimeError(f"relay request rejected: code={error_code(response)}")
+        relay_url = str(relay_info.get("relayUrl") or "")
+        relay_token = str(relay_info.get("relayToken") or relay_info.get("sessionToken") or "")
+        if not relay_url or not relay_token:
+            raise RuntimeError("relay response has no relayUrl or relayToken")
+        parsed = urlsplit(relay_url if "://" in relay_url else "https://" + relay_url)
+        host = parsed.hostname
+        if not host:
+            raise RuntimeError("relay URL has no hostname")
+        path = parsed.path or "/"
+        path += ("?" + parsed.query if parsed.query else "?") + "&retryTime=0"
+        headers = {
+            "Host": host,
+            "User-Agent": f"Client={APP_NAME} Android {APP_VERSION}/1.3",
+            "Keep-Relay": "3600",
+            "Accept": "*/*",
+            "Content-Type": "multipart/mixed;boundary=--client-stream-boundary--",
+            "Content-Length": "9223372036854775807",
+            "X-token": relay_token,
+            "X-Client-Model": str(device.get("deviceModel") or "C200"),
+            "X-Client-UUID": player_id,
+            "X-Redirect-Times": "0",
+            "X-Pull-Mode": "2",
+            "X-Version": "2.0",
+            "X-Arrive-Latency": "0",
+            "Connection": "Keep-alive",
+        }
+        if relay_info.get("elbCookie"):
+            headers["Cookie"] = str(relay_info["elbCookie"])
+        raw_request = (
+            f"POST {path} HTTP/1.1\r\n"
+            + "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+            + "\r\n"
+        ).encode("ascii")
+        player = None
+        total_bytes = 0
+        started = time.monotonic()
+        print(
+            f"Native player: camera={device.get('alias') or device.get('deviceName') or '<unnamed>'}; "
+            f"resolution={resolution}; duration={duration}s"
+        )
+        print(
+            "Native player: original MPEG-TS is sent directly to "
+            f"{Path(native_player).name}; no MJPEG conversion."
+        )
+        try:
+            player_command = [native_player]
+            if Path(native_player).name.lower() in {"ffplay", "ffplay.exe"}:
+                player_command.extend(
+                    [
+                        "-hide_banner",
+                        "-loglevel",
+                        "warning",
+                        "-fflags",
+                        "nobuffer",
+                        "-flags",
+                        "low_delay",
+                        "-framedrop",
+                        "-sync",
+                        "video",
+                        "-probesize",
+                        "32768",
+                        "-analyzeduration",
+                        "0",
+                        "-f",
+                        "mpegts",
+                        "-i",
+                        "pipe:0",
+                    ]
+                )
+            player = subprocess.Popen(
+                player_command,
+                stdin=subprocess.PIPE,
+            )
+            assert player.stdin is not None
+            with socket.create_connection((host, parsed.port or 443), timeout=15) as plain_socket:
+                with self.verify_context.wrap_socket(
+                    plain_socket, server_hostname=host
+                ) as tls_socket:
+                    tls_socket.settimeout(20)
+                    tls_socket.sendall(raw_request)
+                    buffer = bytearray()
+                    self._read_cipc_http_headers(tls_socket, buffer)
+                    deadline = started + max(1, duration)
+                    while time.monotonic() < deadline:
+                        boundary = self._read_cipc_line(tls_socket, buffer)
+                        if not boundary or boundary in (b"\r", b"\n"):
+                            continue
+                        if b"--device-stream-boundary--" not in boundary:
+                            continue
+                        part_headers: dict[str, str] = {}
+                        while True:
+                            line = self._read_cipc_line(tls_socket, buffer)
+                            if not line:
+                                break
+                            try:
+                                key, value = line.decode("latin1").split(":", 1)
+                            except ValueError as exc:
+                                raise RuntimeError("invalid relay multipart header") from exc
+                            part_headers[key.strip().lower()] = value.strip()
+                        if part_headers.get("x-if-encrypt") == "1":
+                            raise RuntimeError("relay video is encrypted: native probe cannot decode it")
+                        length = int(part_headers.get("content-length", "0"))
+                        if length <= 0:
+                            continue
+                        payload = self._read_cipc_exact(tls_socket, buffer, length)
+                        if player.poll() is not None:
+                            raise RuntimeError(f"ffplay exited with code {player.returncode}")
+                        try:
+                            player.stdin.write(payload)
+                            player.stdin.flush()
+                        except BrokenPipeError as exc:
+                            raise RuntimeError("ffplay closed the native stream") from exc
+                        total_bytes += len(payload)
+        finally:
+            if player is not None:
+                if player.stdin is not None:
+                    try:
+                        player.stdin.close()
+                    except OSError:
+                        pass
+                try:
+                    player.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    player.terminate()
+                    try:
+                        player.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        player.kill()
+                        player.wait(timeout=2)
+        print(f"Native player finished: received={total_bytes} bytes")
+
+    @staticmethod
+    def _read_cipc_http_headers(sock: ssl.SSLSocket, buffer: bytearray) -> bytes:
+        while b"\r\n\r\n" not in buffer and len(buffer) < 65536:
+            chunk = sock.recv(8192)
+            if not chunk:
+                raise EOFError("relay closed while reading headers")
+            buffer.extend(chunk)
+        separator = buffer.find(b"\r\n\r\n")
+        if separator < 0:
+            raise RuntimeError("relay headers are too large")
+        headers = bytes(buffer[:separator])
+        del buffer[: separator + 4]
+        if not headers.startswith(b"HTTP/1.1 200"):
+            raise RuntimeError("invalid relay HTTP response")
+        return headers
+
+    @staticmethod
+    def _read_cipc_line(sock: ssl.SSLSocket, buffer: bytearray) -> bytes:
+        while b"\r\n" not in buffer:
+            chunk = sock.recv(8192)
+            if not chunk:
+                raise EOFError("relay closed")
+            buffer.extend(chunk)
+        separator = buffer.find(b"\r\n")
+        line = bytes(buffer[:separator])
+        del buffer[: separator + 2]
+        return line
+
+    @staticmethod
+    def _read_cipc_exact(sock: ssl.SSLSocket, buffer: bytearray, length: int) -> bytes:
+        while len(buffer) < length:
+            chunk = sock.recv(max(8192, length - len(buffer)))
+            if not chunk:
+                raise EOFError("relay closed during a media packet")
+            buffer.extend(chunk)
+        payload = bytes(buffer[:length])
+        del buffer[:length]
+        return payload
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=f"{PRODUCT_NAME}: test cloud Tapo")
@@ -1559,6 +1769,23 @@ def main() -> int:
         "--cdn-test",
         action="store_true",
         help="test the CIPC relay HTTPS CDN path",
+    )
+    parser.add_argument(
+        "--native-player",
+        action="store_true",
+        help="play the selected camera's original MPEG-TS with ffplay (diagnostic only)",
+    )
+    parser.add_argument(
+        "--camera-index",
+        type=int,
+        default=1,
+        help="1-based camera index for --native-player (default: 1)",
+    )
+    parser.add_argument(
+        "--native-duration",
+        type=int,
+        default=60,
+        help="seconds to keep the diagnostic native player open (default: 60)",
     )
     parser.add_argument(
         "--fresh-login",
@@ -1623,6 +1850,22 @@ def main() -> int:
             f"| account_status={status if status is not None else '<n/a>'} "
             f"| id={mask_id(device.get('deviceId'))}"
         )
+    if args.native_player:
+        if args.camera_index < 1 or args.camera_index > len(devices):
+            print(
+                f"Native player failed: camera index must be between 1 and {len(devices)}.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            client.play_cipc_native(
+                base_url,
+                devices[args.camera_index - 1],
+                duration=max(1, args.native_duration),
+            )
+        except (RuntimeError, OSError, ssl.SSLError, EOFError) as exc:
+            print(f"Native player failed: {exc}", file=sys.stderr)
+            return 1
     if args.relay_test:
         try:
             client.probe_legacy_relay(base_url, devices[0])

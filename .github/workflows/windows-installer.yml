@@ -42,9 +42,15 @@ jobs:
           $extract = Join-Path $env:RUNNER_TEMP 'ffmpeg'
           Expand-Archive -Path $archive -DestinationPath $extract -Force
           $binary = Get-ChildItem -Path $extract -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+          $nativePlayer = Get-ChildItem -Path $extract -Filter ffplay.exe -Recurse | Select-Object -First 1
           if (-not $binary) { throw 'FFmpeg executable was not found in the downloaded archive.' }
+          if (-not $nativePlayer) { throw 'FFplay executable was not found in the downloaded archive.' }
           New-Item -ItemType Directory -Force -Path windows/dist | Out-Null
           Copy-Item $binary.FullName windows/dist/ffmpeg.exe
+          Copy-Item $nativePlayer.FullName windows/dist/ffplay.exe
+          Get-ChildItem -Path $nativePlayer.Directory.FullName -Filter '*.dll' | ForEach-Object {
+            Copy-Item $_.FullName windows/dist -Force
+          }
           Copy-Item dist/tapo-backend.exe windows/dist/tapo-backend.exe
 
       - name: Set up Node.js

@@ -106,6 +106,11 @@ cp -a "$source_dir/cloud_web/." "$app_dir/cloud_web/"
 cp "$source_dir/certs/tapo-cloud-roots.pem" "$app_dir/certs/"
 cp "$source_dir/linux/run-tapo-cloud-viewer" "$app_dir/"
 cp "$source_dir/linux/tapo-cloud-viewer.png" "$app_dir/"
+rm -f -- "$app_dir/native-ffmpeg-player"
+if [[ -f "$source_dir/experiments/native-ffmpeg-player/native-ffmpeg-player" ]]; then
+  cp "$source_dir/experiments/native-ffmpeg-player/native-ffmpeg-player" "$app_dir/"
+  chmod 755 "$app_dir/native-ffmpeg-player"
+fi
 cp "$source_dir/linux/tapo-cloud-viewer.png" "$icon_dir/topo-tapo-cloud-view.png"
 chmod 755 "$app_dir/run-tapo-cloud-viewer"
 

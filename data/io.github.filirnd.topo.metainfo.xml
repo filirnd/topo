@@ -40,6 +40,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.6" date="2026-10-26">
+      <description>
+        <p>Improved long-running live stream stability with automatic recovery after temporary relay interruptions or stalled playback.</p>
+      </description>
+    </release>
     <release version="0.1.5" date="2026-10-21">
       <description>
         <p>Reduced live-preview latency and made low-latency playback the default live experience.</p>

@@ -2,6 +2,15 @@
 
 All notable changes to Topo are documented here.
 
+## [0.1.6] - 2026-10-26
+
+### Fixed
+
+- Improved live preview stability during long-running sessions.
+- Added automatic recovery when a stream stops receiving frames.
+- Prevented stale cloud relay responses from freezing the live video.
+- Improved reconnection handling after temporary relay interruptions.
+
 ## [0.1.5] - 2026-10-21
 
 ### Added

@@ -50,6 +50,7 @@ if not ICON_PATH.exists():
     ICON_PATH = ROOT / "io.github.filirnd.topo.png"
 PRODUCT_NAME = "Topo - desktop app for Tapo camera"
 STREAM_START_TIMEOUT = 12.0
+NATIVE_STREAM_RESET = object()
 STREAM_RESOLUTION = os.environ.get("TOPO_STREAM_RESOLUTION", "HD").strip().upper()
 if STREAM_RESOLUTION not in {"HD", "SD"}:
     STREAM_RESOLUTION = "HD"
@@ -245,6 +246,28 @@ class CloudMediaWorker:
             self._interrupt_relay()
         self.wake.set()
         return subscriber
+
+    def _broadcast_native_reset(self) -> None:
+        """Terminate native HTTP subscribers before a relay is recreated.
+
+        A fragmented MP4 response cannot safely contain a second ftyp/moov
+        initialization segment. The next relay therefore gets a new HTTP
+        response instead of appending its output to the previous one.
+        """
+        with self.lock:
+            subscribers = tuple(self.native_video_subscribers)
+            self.native_video_running = False
+            self.native_init_segment = b""
+        for subscriber in subscribers:
+            try:
+                while True:
+                    subscriber.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                subscriber.put_nowait(NATIVE_STREAM_RESET)
+            except queue.Full:
+                pass
 
     def unsubscribe_native_video(self, subscriber: queue.Queue[bytes]) -> None:
         with self.lock:
@@ -698,6 +721,8 @@ class CloudMediaWorker:
                         if self.relay_socket is tls_socket:
                             self.relay_socket = None
         finally:
+            if not self.stop.is_set() and needs_native_video:
+                self._broadcast_native_reset()
             with self.relay_lock:
                 if self.relay_socket is not None and self.relay_socket.fileno() < 0:
                     self.relay_socket = None
@@ -1579,6 +1604,8 @@ class Handler(BaseHTTPRequestHandler):
                     # existing browser relay. Its first EOF is transient;
                     # wait for the worker to establish the fresh relay.
                     continue
+                if first_chunk is NATIVE_STREAM_RESET:
+                    raise ConnectionError("native video relay reset")
 
             self.send_response(200)
             self.send_header("Content-Type", "video/mp4")
@@ -1597,6 +1624,8 @@ class Handler(BaseHTTPRequestHandler):
                     if worker.last_error:
                         raise ConnectionError(worker.last_error)
                     continue
+                if chunk is NATIVE_STREAM_RESET:
+                    raise ConnectionError("native video relay reset")
                 self.wfile.write(chunk)
                 self.wfile.flush()
         except (TimeoutError, RuntimeError) as exc:

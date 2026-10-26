@@ -145,12 +145,12 @@
       const preview = card.querySelector('.preview'), video = preview.querySelector('.live-native-video'), audio = preview.querySelector('.live-audio'), audioControls = preview.querySelector('.audio-controls'), audioButton = preview.querySelector('.audio-toggle'), volume = preview.querySelector('.audio-volume');
       if (!video) return;
       const loading = preview.querySelector('.preview-status.loading'), error = preview.querySelector('.preview-status.error');
-      let loadingTimer, reconnectTimer, lastTime = null, lastProgressAt = Date.now(), reconnectAttempt = 0, hasPlayed = false;
+      let loadingTimer, reconnectTimer, reconnectAttempt = 0;
       const streamUrl = () => `/stream/${encodeURIComponent(card.dataset.id)}.mp4?native=${Date.now()}`;
       const hideLoading = () => loading?.classList.add('hidden');
       const scheduleLoadingFallback = () => { clearTimeout(loadingTimer); loadingTimer = setTimeout(hideLoading, 3500); };
       const setStreamState = failed => { if (failed) { clearTimeout(loadingTimer); hideLoading(); } else scheduleLoadingFallback(); error?.classList.toggle('hidden', !failed); };
-      const ready = () => { clearTimeout(loadingTimer); hideLoading(); setStreamState(false); lastTime = video.currentTime; lastProgressAt = Date.now(); };
+      const ready = () => { clearTimeout(loadingTimer); hideLoading(); setStreamState(false); };
       const scheduleReconnect = reason => {
         if (reconnectTimer) return;
         const delay = Math.min(1000 * (2 ** reconnectAttempt), 10000);
@@ -158,9 +158,6 @@
         if (reason) { error?.classList.remove('hidden'); error?.firstChild && (error.firstChild.textContent = reason); }
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
-          hasPlayed = false;
-          lastTime = null;
-          lastProgressAt = Date.now();
           video.pause();
           video.removeAttribute('src');
           video.load();
@@ -172,14 +169,13 @@
           if (playback) playback.catch(() => {});
         }, delay);
       };
-      const reportProgress = () => { const current = video.currentTime; if (Number.isFinite(current) && (lastTime === null || current > lastTime + 0.01)) { lastTime = current; lastProgressAt = Date.now(); } };
       const handleError = () => { setStreamState(true); scheduleReconnect('Stream interrupted. Reconnecting…'); };
-      video.addEventListener('loadedmetadata', ready); video.addEventListener('loadeddata', ready); video.addEventListener('canplay', ready); video.addEventListener('playing', () => { ready(); hasPlayed = true; reconnectAttempt = 0; }); video.addEventListener('timeupdate', reportProgress); video.addEventListener('progress', reportProgress); video.addEventListener('error', handleError); video.addEventListener('ended', () => scheduleReconnect('Stream ended. Reconnecting…')); video.addEventListener('stalled', () => scheduleReconnect('Stream stalled. Reconnecting…'));
-      const watchdog = setInterval(() => { reportProgress(); if (hasPlayed && Date.now() - lastProgressAt > 8000) scheduleReconnect(video.ended || video.paused ? 'Stream stopped. Reconnecting…' : 'Stream stalled. Reconnecting…'); }, 2000);
+      video.addEventListener('loadedmetadata', ready); video.addEventListener('loadeddata', ready); video.addEventListener('canplay', ready); video.addEventListener('playing', () => { ready(); reconnectAttempt = 0; }); video.addEventListener('error', handleError); video.addEventListener('ended', () => scheduleReconnect('Stream ended. Reconnecting…'));
       scheduleLoadingFallback();
       preview.querySelector('.retry-button')?.addEventListener('click', event => { event.stopPropagation(); reconnectAttempt = 0; scheduleReconnect('Retrying stream…'); });
       if (audio && audioButton && audioControls && volume) { audio.volume = Number(volume.value); const stopAudio = () => { audio.pause(); audio.removeAttribute('src'); audio.load(); audioButton.dataset.audioOn = 'false'; audioButton.setAttribute('aria-pressed', 'false'); audioButton.classList.remove('active'); audioControls.classList.remove('active'); audioButton.disabled = false; audioButton.textContent = 'Enable audio'; }; const startAudio = () => { audioButton.disabled = true; audioButton.textContent = 'Connecting audio…'; audio.volume = Number(volume.value); audio.src = `/audio/${encodeURIComponent(card.dataset.id)}.mp3?stream=${Date.now()}`; audio.load(); const playback = audio.play(); if (playback) playback.catch(() => { stopAudio(); audioButton.textContent = 'Enable audio'; }); }; audioButton.addEventListener('click', event => { event.stopPropagation(); if (audioButton.dataset.audioOn === 'true') stopAudio(); else startAudio(); }); volume.addEventListener('click', event => event.stopPropagation()); volume.addEventListener('input', () => { audio.volume = Number(volume.value); }); audio.addEventListener('playing', () => { audioButton.disabled = false; audioButton.dataset.audioOn = 'true'; audioButton.setAttribute('aria-pressed', 'true'); audioButton.classList.add('active'); audioButton.textContent = 'Mute audio'; }); audio.addEventListener('error', () => { if (audioButton.dataset.audioOn !== 'true') stopAudio(); }); }
     }
+    document.addEventListener('click', event => { const button = event.target.closest('.audio-toggle'); if (!button) return; const controls = button.closest('.audio-controls'); if (!controls) return; controls.classList.toggle('active', button.dataset.audioOn !== 'true'); }, true);
     const recordingsState = {id: null, name: '', dates: [], date: '', preparedClipKey: '', preparedVideoUrl: ''};
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     function displayDate(value) { const text = String(value || ''); if (!/^\d{8}$/.test(text)) return text; return `${text.slice(6, 8)} ${monthNames[Number(text.slice(4, 6)) - 1] || ''} ${text.slice(0, 4)}`; }

@@ -2,6 +2,16 @@
 
 All notable changes to Topo are documented here.
 
+## [0.1.7] - 2026-10-26
+
+### Fixed
+
+- Fixed live stream freezes when enabling audio.
+- Prevented unnecessary video decoder processes from blocking the relay.
+- Improved audio relay reconnect handling.
+- Prevented repeated live stream retries during normal playback.
+- Restored per-camera volume control visibility when audio is enabled.
+
 ## [0.1.6] - 2026-10-26
 
 ### Fixed

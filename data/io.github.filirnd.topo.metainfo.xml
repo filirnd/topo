@@ -40,6 +40,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.7" date="2026-10-26">
+      <description>
+        <p>Fixed live stream stability when enabling audio and restored per-camera volume controls.</p>
+      </description>
+    </release>
     <release version="0.1.6" date="2026-10-26">
       <description>
         <p>Improved long-running live stream stability with automatic recovery after temporary relay interruptions or stalled playback.</p>

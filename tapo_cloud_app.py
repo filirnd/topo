@@ -218,7 +218,14 @@ class CloudMediaWorker:
     def subscribe_audio(self) -> queue.Queue[bytes]:
         subscriber: queue.Queue[bytes] = queue.Queue(maxsize=32)
         with self.lock:
+            first_audio_subscriber = not self.audio_subscribers
             self.audio_subscribers.add(subscriber)
+        # The relay setup snapshots whether audio is needed. If live video
+        # already opened the relay without audio, wake alone cannot add an
+        # encoder to that existing session; force a per-camera reconnect so
+        # _relay_once() starts with needs_audio_decoder=True.
+        if first_audio_subscriber:
+            self._interrupt_relay()
         self.wake.set()
         return subscriber
 
@@ -542,7 +549,12 @@ class CloudMediaWorker:
                     tls_socket.sendall(raw_request)
                     buffer = bytearray()
                     self._read_http_headers(tls_socket, buffer)
-                    if needs_video_decoder or needs_audio_decoder:
+                    # The JPEG decoder is needed only by the legacy MJPEG
+                    # subscribers. Audio extraction reads the relay MPEG-TS
+                    # directly; starting this decoder for audio-only clients
+                    # would leave its stdout unread and eventually block the
+                    # whole relay when that pipe fills.
+                    if needs_video_decoder:
                         ffmpeg = subprocess.Popen(
                             [
                             self.client_ffmpeg,
@@ -593,8 +605,8 @@ class CloudMediaWorker:
                                 daemon=True,
                             )
                             jpeg_thread.start()
-                        if needs_audio_decoder:
-                            audio_ffmpeg, audio_thread = self._start_audio_encoder()
+                    if needs_audio_decoder:
+                        audio_ffmpeg, audio_thread = self._start_audio_encoder()
                     if needs_native_video:
                         with self.lock:
                             self.native_video_running = True
@@ -706,7 +718,7 @@ class CloudMediaWorker:
                             outputs.append(native_video_ffmpeg.stdin)
                         if is_video and current_native_process is not None and current_native_process.stdin is not None:
                             outputs.append(native_process.stdin)
-                        if is_video and outputs:
+                        if is_video and (outputs or audio_ffmpeg is not None):
                             self._pipe_exact(
                                 tls_socket,
                                 buffer,

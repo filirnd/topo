@@ -1,0 +1,19 @@
+[Unit]
+Description=Topo Watcher (Tapo doorbell/camera alerts)
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=@APP_DIR@
+# Reuse a saved Topo/Flatpak login session when present.
+Environment=XDG_STATE_HOME=%h/.var/app/io.github.filirnd.topo/.local/state
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 @APP_DIR@/tapo_desktop.py --watch --headless
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

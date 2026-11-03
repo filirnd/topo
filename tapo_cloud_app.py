@@ -1701,6 +1701,9 @@ class Handler(BaseHTTPRequestHandler):
         if request_path == "/":
             self.send_file(WEB_ROOT / "index.html")
             return
+        if request_path == "/watch":
+            self.send_file(WEB_ROOT / "watch.html")
+            return
         if request_path == "/assets/topo.png":
             icon_path = ICON_PATH if ICON_PATH.exists() else ROOT / "linux" / "tapo-cloud-viewer.png"
             self.send_file(icon_path)

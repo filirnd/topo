@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Topo Watcher
+Comment=Background Tapo doorbell and camera alerts without continuous streaming
+Exec=topo --watch
+Icon=io.github.filirnd.topo
+Terminal=false
+Categories=AudioVideo;Video;Network;System;
+StartupNotify=false
+StartupWMClass=io.github.filirnd.topo.watch
+X-GNOME-UsesNotifications=true

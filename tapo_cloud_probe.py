@@ -51,6 +51,58 @@ RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 ROOT = RESOURCE_ROOT
 TP_LINK_ROOTS_PATH = ROOT / "certs" / "tapo-cloud-roots.pem"
 
+# Cloud device types that expose a CIPC live stream. Doorbells such as the
+# D210 are not SMART.IPCAMERA, so listing only cameras hides them.
+STREAMING_DEVICE_TYPES = (
+    "SMART.IPCAMERA",
+    "SMART.TAPODOORBELL",
+)
+
+# Cloud notification center msgType values that should open a live preview.
+# Marketing / account noise is intentionally excluded.
+ACTIVITY_NOTIFICATION_TYPES = {
+    "motion",
+    "motionalarm",
+    "person",
+    "persondetected",
+    "vehicle",
+    "pet",
+    "animal",
+    "baby_cry",
+    "babycry",
+    "package",
+    "packagedelivered",
+    "packagepickedup",
+    "ring",
+    "ringalarm",
+    "doorbell",
+    "doorbellpressed",
+    "doorbellring",
+    "doorbell_missed",
+    "doorbellmissed",
+    "doorbell_answered",
+    "doorbellanswered",
+    "anti_theft",
+    "antitheft",
+    "tamper",
+    "linecross",
+    "areaintrusion",
+    "glassbreak",
+    "smokealarm",
+    "activity",
+    "detection",
+}
+
+IGNORED_NOTIFICATION_TYPES = {
+    "brandpromotion",
+    "promotion",
+    "marketing",
+    "system",
+    "account",
+    "firmware",
+    "share",
+}
+
 # App-level credentials used by the Tapo Android application.  These identify
 # the client application, not the user's Tapo account.
 ACCESS_KEY = "4d11b6b9d5ea4d19a829adbb9714b057"
@@ -165,6 +217,142 @@ def clear_session() -> None:
         session_path().unlink()
     except FileNotFoundError:
         pass
+
+
+def _nested_get(value: object, *keys: str) -> object:
+    current: object = value
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _first_string(*values: object) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+    return ""
+
+
+def _notification_time_ms(raw: dict) -> int:
+    for key in ("time", "createTime", "timestamp", "msgTime", "indexTime"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        try:
+            number = int(str(value).strip())
+        except (TypeError, ValueError):
+            continue
+        # Some payloads use seconds; normalize to milliseconds.
+        if number < 10_000_000_000:
+            number *= 1000
+        return number
+    return 0
+
+
+def normalize_app_notification(raw: object) -> dict | None:
+    """Normalize a Tapo notification-center row into a stable alert dict."""
+    if not isinstance(raw, dict):
+        return None
+    msg_id = _first_string(raw.get("msgId"), raw.get("id"), raw.get("messageId"))
+    msg_type = _first_string(raw.get("msgType"), raw.get("type"), raw.get("eventType"))
+    title = _first_string(raw.get("title"), raw.get("subject"))
+    content = _first_string(raw.get("content"), raw.get("text"), raw.get("body"))
+    attachments = raw.get("attachments") if isinstance(raw.get("attachments"), dict) else {}
+    device_id = _first_string(
+        raw.get("deviceId"),
+        raw.get("deviceID"),
+        _nested_get(attachments, "deviceId"),
+        _nested_get(attachments, "device", "deviceId"),
+        _nested_get(attachments, "data", "deviceId"),
+        _nested_get(attachments, "iac", "deviceId"),
+    )
+    device_name = _first_string(
+        raw.get("deviceName"),
+        raw.get("alias"),
+        _nested_get(attachments, "deviceName"),
+        _nested_get(attachments, "device", "alias"),
+        _nested_get(attachments, "device", "deviceName"),
+    )
+    time_ms = _notification_time_ms(raw)
+    if not msg_id and not msg_type and not title:
+        return None
+    return {
+        "msg_id": msg_id or f"{device_id}:{time_ms}:{msg_type}:{title}",
+        "time_ms": time_ms,
+        "msg_type": msg_type,
+        "title": title,
+        "content": content,
+        "device_id": device_id,
+        "device_name": device_name,
+        "msg_category": _first_string(raw.get("msgCategory"), raw.get("category")),
+        "raw": raw,
+    }
+
+
+def is_activity_notification(notification: dict) -> bool:
+    """Return True when a notification looks like a camera/doorbell activity."""
+    msg_type = str(notification.get("msg_type") or "").strip().lower()
+    category = str(notification.get("msg_category") or "").strip().lower()
+    compact_type = re.sub(r"[^a-z0-9]", "", msg_type)
+    if compact_type in IGNORED_NOTIFICATION_TYPES or category in {"promotion", "marketing"}:
+        return False
+    if compact_type in ACTIVITY_NOTIFICATION_TYPES:
+        return True
+    # Keep device-linked unknowns; drop pure account/marketing noise.
+    if notification.get("device_id"):
+        return compact_type not in {"", "tapo"} or bool(notification.get("title"))
+    haystack = " ".join(
+        str(notification.get(key) or "").lower()
+        for key in ("msg_type", "title", "content")
+    )
+    keywords = (
+        "motion",
+        "person",
+        "vehicle",
+        "pet",
+        "ring",
+        "doorbell",
+        "detected",
+        "package",
+        "tamper",
+    )
+    return any(keyword in haystack for keyword in keywords)
+
+
+def activity_label(notification: dict) -> str:
+    """Human-readable short label for tray/PiP titles."""
+    msg_type = str(notification.get("msg_type") or "").strip()
+    compact = re.sub(r"[^a-z0-9]", "", msg_type.lower())
+    labels = {
+        "motion": "Motion",
+        "motionalarm": "Motion",
+        "person": "Person",
+        "persondetected": "Person",
+        "vehicle": "Vehicle",
+        "pet": "Pet",
+        "animal": "Animal",
+        "ring": "Ring",
+        "ringalarm": "Ring",
+        "doorbell": "Ring",
+        "doorbellpressed": "Ring",
+        "doorbellring": "Ring",
+        "doorbellmissed": "Missed ring",
+        "doorbellanswered": "Answered",
+        "packagedelivered": "Package",
+        "packagepickedup": "Package",
+        "antitheft": "Anti-theft",
+        "tamper": "Tamper",
+    }
+    if compact in labels:
+        return labels[compact]
+    title = str(notification.get("title") or "").strip()
+    if title:
+        return title[:48]
+    return msg_type or "Activity"
 
 
 def error_code(value: object) -> int:
@@ -1247,9 +1435,9 @@ class TapoCloud:
 
     def list_cameras(self, base_url: str) -> list[dict]:
         payload = {
-            "deviceTypeList": ["SMART.IPCAMERA"],
+            "deviceTypeList": list(STREAMING_DEVICE_TYPES),
             "index": 0,
-            "limit": 20,
+            "limit": 50,
         }
         response = self.post(
             base_url,
@@ -1263,7 +1451,78 @@ class TapoCloud:
             )
         result = result_of(response)
         devices = result.get("deviceList", [])
-        return devices if isinstance(devices, list) else []
+        if not isinstance(devices, list):
+            return []
+        # Keep cameras and doorbells; skip non-streaming accessories that
+        # may appear if the cloud widens the filter later.
+        allowed = set(STREAMING_DEVICE_TYPES)
+        return [
+            device
+            for device in devices
+            if isinstance(device, dict)
+            and str(device.get("deviceType") or "") in allowed
+        ]
+
+    def list_app_notifications(
+        self,
+        base_url: str,
+        *,
+        since_ms: int,
+        limit: int = 50,
+        max_pages: int = 5,
+        locale: str = "en_US",
+    ) -> list[dict]:
+        """Fetch Tapo app notification-center rows newer than since_ms.
+
+        The official client only returns data with direction=asc starting at
+        indexTime. Device activity events appear here when Activity
+        Notifications are enabled in the Tapo app.
+        """
+        if since_ms < 0:
+            since_ms = 0
+        limit = max(1, min(int(limit), 50))
+        max_pages = max(1, min(int(max_pages), 20))
+        collected: list[dict] = []
+        index = 0
+        for _ in range(max_pages):
+            payload = {
+                "appType": APP_NAME,
+                "terminalUUID": self.terminal_uuid,
+                "mobileType": "ANDROID",
+                "deviceToken": "",
+                "locale": locale,
+                "direction": "asc",
+                "index": index,
+                "indexTime": int(since_ms),
+                "limit": limit,
+                "contentVersion": 3,
+            }
+            response = self.post(
+                base_url,
+                "/api/v2/common/getAppNotificationByPage",
+                payload,
+                token=True,
+            )
+            if error_code(response) != 0:
+                raise RuntimeError(
+                    "notification list rejected: "
+                    f"code {error_code(response)}"
+                )
+            result = result_of(response)
+            rows = result.get("notifications", [])
+            if not isinstance(rows, list):
+                rows = []
+            for row in rows:
+                normalized = normalize_app_notification(row)
+                if normalized is not None:
+                    collected.append(normalized)
+            if not result.get("hasNextPage"):
+                break
+            try:
+                index = int(result.get("currentIndex", index)) + 1
+            except (TypeError, ValueError):
+                index += 1
+        return collected
 
     def probe_legacy_relay(self, base_url: str, device: dict) -> None:
         """Try the older cloud relay negotiation used by C200-era clients.

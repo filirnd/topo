@@ -102,6 +102,7 @@ rm -f -- "$legacy_desktop_file_v1"
 cp "$source_dir/tapo_cloud_app.py" "$app_dir/"
 cp "$source_dir/tapo_cloud_probe.py" "$app_dir/"
 cp "$source_dir/tapo_desktop.py" "$app_dir/"
+cp "$source_dir/tapo_watch.py" "$app_dir/"
 cp -a "$source_dir/cloud_web/." "$app_dir/cloud_web/"
 cp "$source_dir/certs/tapo-cloud-roots.pem" "$app_dir/certs/"
 cp "$source_dir/linux/run-tapo-cloud-viewer" "$app_dir/"
@@ -118,10 +119,19 @@ escaped_app_dir=$(printf '%s' "$app_dir" | sed 's/[&|]/\\&/g')
 sed "s|@APP_DIR@|$escaped_app_dir|g" \
   "$source_dir/linux/tapo-cloud-viewer.desktop.in" \
   > "$desktop_file"
+sed "s|@APP_DIR@|$escaped_app_dir|g" \
+  "$source_dir/linux/topo-watch.desktop.in" \
+  > "$applications_dir/io.github.filirnd.topo.watch.desktop"
+
+autostart_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/autostart"
+mkdir -p "$autostart_dir"
+cp "$applications_dir/io.github.filirnd.topo.watch.desktop" \
+  "$autostart_dir/io.github.filirnd.topo.watch.desktop"
 
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
 fi
 
 printf 'Topo - desktop app for Tapo camera installed. Launch it from the applications menu.\n'
+printf 'Topo Watcher installed with login autostart (alerts without continuous streaming).\n'
 printf 'Installed files: %s\n' "$app_dir"

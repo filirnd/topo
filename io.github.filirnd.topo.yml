@@ -11,6 +11,8 @@ finish-args:
   - --socket=fallback-x11
   - --socket=wayland
   - --socket=pulseaudio
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
 
 modules:
   - name: topo
@@ -20,11 +22,13 @@ modules:
       - install -Dm644 tapo_cloud_app.py /app/share/topo/tapo_cloud_app.py
       - install -Dm644 tapo_cloud_probe.py /app/share/topo/tapo_cloud_probe.py
       - install -Dm644 tapo_desktop.py /app/share/topo/tapo_desktop.py
+      - install -Dm644 tapo_watch.py /app/share/topo/tapo_watch.py
       - cp -a cloud_web /app/share/topo/
       - cp -a certs /app/share/topo/
       - install -Dm644 linux/tapo-cloud-viewer.png /app/share/topo/tapo-cloud-viewer.png
       - install -Dm644 data/io.github.filirnd.topo.png /app/share/icons/hicolor/512x512/apps/io.github.filirnd.topo.png
       - install -Dm644 data/io.github.filirnd.topo.desktop /app/share/applications/io.github.filirnd.topo.desktop
+      - install -Dm644 data/io.github.filirnd.topo.watch.desktop /app/share/applications/io.github.filirnd.topo.watch.desktop
       - install -Dm644 data/io.github.filirnd.topo.metainfo.xml /app/share/metainfo/io.github.filirnd.topo.metainfo.xml
       - install -Dm644 LICENSE /app/share/licenses/io.github.filirnd.topo/LICENSE
     sources:

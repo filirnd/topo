@@ -1,7 +1,7 @@
 [Unit]
 Description=Topo Watcher (Tapo doorbell/camera alerts)
+PartOf=graphical-session.target
 After=graphical-session.target
-Wants=graphical-session.target
 
 [Service]
 Type=simple
@@ -16,4 +16,4 @@ KillMode=mixed
 TimeoutStopSec=15
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

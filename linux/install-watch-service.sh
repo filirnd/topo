@@ -15,7 +15,11 @@ sed "s|@APP_DIR@|$escaped_app_dir|g" \
 rm -f -- "$autostart_dir/io.github.filirnd.topo.watch.desktop"
 
 systemctl --user daemon-reload
-systemctl --user enable --now "$unit_name"
+# Drop an older enablement on default.target. That WantedBy pulled
+# graphical-session.target up at login and could leave GNOME stuck.
+systemctl --user disable "$unit_name" >/dev/null 2>&1 || true
+systemctl --user enable "$unit_name"
+systemctl --user restart "$unit_name"
 
 printf 'Topo Watcher installed as a user systemd service (headless).\n'
 printf 'Commands:\n'
